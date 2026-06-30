@@ -337,6 +337,16 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let syncCode = lsGet('sync_code', null);
+// iOS Safari 加到主畫面後的 standalone 模式 localStorage 可能不持久
+// 改用網址參數當作備援：?code=xxx
+(function(){
+  const params = new URLSearchParams(location.search);
+  const urlCode = params.get('code');
+  if(urlCode && !syncCode) {
+    syncCode = urlCode;
+    lsSet('sync_code', urlCode);
+  }
+})();
 let _syncSaveTimer = null;
 
 function lsGet(key, fallback) {
@@ -376,11 +386,14 @@ async function loginWithSyncCode() {
 
     syncCode = code;
     lsSet('sync_code', code);
+    // 把代碼寫進網址，這樣即使 localStorage 被清掉，從這個網址打開也能自動登入
+    const newUrl = location.pathname + '?code=' + encodeURIComponent(code);
+    history.replaceState(null, '', newUrl);
     document.getElementById('sync-login').style.display='none';
     document.getElementById('app').style.display='';
     applyTheme(DB.theme);
     render();
-    showToast('同步成功！');
+    showToast('同步成功！建議重新「加入主畫面」以確保網址帶有代碼');
   } catch(err) {
     console.error(err);
     const detail = err?.message || err?.error_description || JSON.stringify(err);
@@ -2693,8 +2706,12 @@ window.deleteFundConfirm=deleteFundConfirm;
 // 初始化
 // ============================================================
 function initApp() {
-  console.log('syncCode on load:', syncCode);
   if(syncCode) {
+    // 確保網址帶有代碼參數（即使是從 localStorage 讀到的）
+    const params = new URLSearchParams(location.search);
+    if(params.get('code')!==syncCode) {
+      history.replaceState(null, '', location.pathname + '?code=' + encodeURIComponent(syncCode));
+    }
     // 已有同步代碼，背景重新拉取雲端最新資料再顯示
     document.getElementById('app').style.display='';
     switchTab('add');
