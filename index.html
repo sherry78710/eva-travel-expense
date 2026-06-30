@@ -2693,6 +2693,7 @@ window.deleteFundConfirm=deleteFundConfirm;
 // 初始化
 // ============================================================
 function initApp() {
+  console.log('syncCode on load:', syncCode);
   if(syncCode) {
     // 已有同步代碼，背景重新拉取雲端最新資料再顯示
     document.getElementById('app').style.display='';
