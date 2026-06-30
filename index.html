@@ -185,6 +185,7 @@ input, textarea, select, button {
       style="width:100%;padding:16px;border-radius:14px;border:1.5px solid var(--line);background:var(--card);font-size:16px;color:var(--text);outline:none;font-family:inherit;text-align:center;margin-bottom:14px">
     <button class="btn-primary" onclick="loginWithSyncCode()">登入 / 建立</button>
     <div id="sync-login-msg" style="text-align:center;font-size:12px;color:var(--faint);margin-top:14px;min-height:16px"></div>
+    <div id="sync-debug" style="margin-top:24px;padding:12px;background:var(--line-light);border-radius:8px;font-size:10px;color:var(--faint);word-break:break-all;text-align:left"></div>
   </div>
 </div>
 
@@ -336,16 +337,12 @@ const SUPABASE_URL = 'https://djujrrwnzsddyynplsqx.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqdWpycnduenNkZHl5bnBsc3F4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4MjY5MjUsImV4cCI6MjA5ODQwMjkyNX0.0lm0Nx2EK7CxXCWUa5bAWcVk9v_TQRHoM6UmFFxPjss';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-let syncCode = lsGet('sync_code', null);
-// iOS Safari 加到主畫面後的 standalone 模式 localStorage 可能不持久
-// 改用網址參數當作備援：?code=xxx
-(function(){
+// 網址參數優先（最可靠，不受 iOS standalone 模式 localStorage 不穩定影響）
+let syncCode = (function(){
   const params = new URLSearchParams(location.search);
   const urlCode = params.get('code');
-  if(urlCode && !syncCode) {
-    syncCode = urlCode;
-    lsSet('sync_code', urlCode);
-  }
+  if(urlCode) { lsSet('sync_code', urlCode); return urlCode; }
+  return lsGet('sync_code', null);
 })();
 let _syncSaveTimer = null;
 
@@ -2706,6 +2703,10 @@ window.deleteFundConfirm=deleteFundConfirm;
 // 初始化
 // ============================================================
 function initApp() {
+  // 除錯用：暫時顯示目前狀態，方便排查問題
+  const debugInfo = `URL: ${location.href}\nsyncCode變數: ${syncCode}\nlocalStorage值: ${lsGet('sync_code','(空)')}`;
+  console.log(debugInfo);
+
   if(syncCode) {
     // 確保網址帶有代碼參數（即使是從 localStorage 讀到的）
     const params = new URLSearchParams(location.search);
@@ -2732,6 +2733,8 @@ function initApp() {
     });
   } else {
     document.getElementById('sync-login').style.display='flex';
+    const dbg=document.getElementById('sync-debug');
+    if(dbg) dbg.textContent='偵錯資訊：\n'+debugInfo;
   }
 }
 initApp();
