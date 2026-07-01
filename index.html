@@ -544,11 +544,11 @@ let selectedTripId=null, editingTripId=null;
 let editingExpId=null, expandedPrefill=null, addSubView='quick';
 let settingsEditCardId=null, settingsEditFundId=null;
 
-function switchTab(tab) {
+function switchTab(tab, opts) {
   currentTab=tab;
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
   document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===`page-${tab}`));
-  if(tab==='add'){ addSubView='quick'; editingExpId=null; expandedPrefill=null; }
+  if(tab==='add' && !(opts&&opts.keepEdit)){ addSubView='quick'; editingExpId=null; expandedPrefill=null; }
   render();
 }
 
@@ -1296,7 +1296,7 @@ function editTrip(id) {
 window.editTrip=editTrip;
 
 function openExpense(id) {
-  editingExpId=id; expandedPrefill=null; addSubView='form'; switchTab('add');
+  editingExpId=id; expandedPrefill=null; addSubView='form'; switchTab('add', {keepEdit:true});
 }
 window.openExpense=openExpense;
 
