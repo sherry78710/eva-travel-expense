@@ -1029,9 +1029,12 @@ function renderTripDetail() {
   const displayExps=detailViewMode==='personal'?personalExps:tripExps;
   const today=todayISO();
 
-  const totalSpent=displayExps.reduce((s,e)=>s+(e.amount||0),0);
+  // 將任一筆消費換算成「旅程幣別」金額（若本身就是旅程幣別則原樣返回，否則透過 TWD 用目前匯率換算）
+  const toTripCur=(e)=>e.currency===trip.currency?(e.amount||0):(rate?(e.twdAmount||0)/rate:0);
+
+  const totalSpent=displayExps.reduce((s,e)=>s+toTripCur(e),0);
   const totalTwd=displayExps.reduce((s,e)=>s+(e.twdAmount||0),0);
-  const todaySpent=personalExps.filter(e=>e.date===today).reduce((s,e)=>s+(e.amount||0),0);
+  const todaySpent=personalExps.filter(e=>e.date===today).reduce((s,e)=>s+toTripCur(e),0);
   const totalRebate=personalExps.reduce((sum,e)=>{
     if(e.payment!=='credit'||!e.cardId||!e.subRateId) return sum;
     const card=DB.cards.find(c=>c.id===e.cardId);
@@ -1072,7 +1075,7 @@ function renderTripDetail() {
     `<div class="empty-state"><div class="empty-title" style="font-size:14px">還沒有消費紀錄</div><div class="empty-sub">點底部「記帳」新增第一筆消費</div></div>`:
     sortedDates.map(date=>{
       const items=grouped[date].sort((a,b)=>(b.time||'').localeCompare(a.time||''));
-      const dayTotal=items.reduce((s,e)=>s+(e.amount||0),0);
+      const dayTotal=items.reduce((s,e)=>s+toTripCur(e),0);
       const weekday=WEEKDAYS[new Date(date).getDay()];
       return `
         <div style="margin-bottom:24px">
@@ -1096,8 +1099,8 @@ function renderTripDetail() {
                         ${e.isPurchaseFor&&payee?`<span class="purchase-tag">代購·${payee.name}</span>`:''}
                       </div>
                       <div style="text-align:right;flex-shrink:0;margin-left:8px">
-                        <div style="font-size:15px;font-weight:700">${cur.code} ${fmtNum(e.amount)}</div>
-                        <div style="font-size:10px;color:var(--faint)">≈NT$${fmtNum(e.twdAmount)}</div>
+                        <div style="font-size:15px;font-weight:700">${e.currency==='TWD'?'NT$':(e.currency||cur.code)} ${fmtNum(e.amount)}</div>
+                        ${e.currency!=='TWD'?`<div style="font-size:10px;color:var(--faint)">≈NT$${fmtNum(e.twdAmount)}</div>`:''}
                       </div>
                     </div>
                     <div style="font-size:11px;color:var(--faint);margin-top:2px;display:flex;align-items:center;gap:4px">
