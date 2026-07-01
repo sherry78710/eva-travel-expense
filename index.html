@@ -1151,7 +1151,7 @@ function renderTripDetail() {
 }
 
 // ============================================================
-// 匯率自動抓取 (Frankfurter API - 免費/無需 Key)
+// 匯率自動抓取 (fawazahmed0/currency-api，備援 open.er-api.com - 皆免費/無需 Key/支援 TWD)
 // 若外部網路無法連線（例如開發沙盒環境），會靜默失敗並保留手動輸入選項
 // ============================================================
 let _rateFetching = false;
@@ -1160,9 +1160,27 @@ const _autoFetchedKey = new Set(); // 避免同一旅程同一天重複自動抓
 function rateCacheKey(code) { return `tv_rate_${code}_${todayISO()}`; }
 
 async function fetchRateFromAPI(fromCode) {
-  // TWD 與外幣皆由 Frankfurter 提供，一次抓 1 單位外幣兌多少 TWD
-  const url = `https://api.frankfurter.app/latest?amount=1&from=${encodeURIComponent(fromCode)}&to=TWD`;
-  const res = await fetch(url);
+  const from = fromCode.toLowerCase();
+  // 來源 1：fawazahmed0/currency-api（免費、支援 200+ 貨幣含 TWD、無需 Key）
+  try {
+    const res = await fetch(`https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${from}.min.json`);
+    if (res.ok) {
+      const data = await res.json();
+      const rate = data?.[from]?.twd;
+      if (rate && !isNaN(rate)) return rate;
+    }
+  } catch (e) {}
+  // 來源 1 備援鏡像（同一資料源的另一個網域，避免 jsdelivr 偶發性掛掉）
+  try {
+    const res = await fetch(`https://latest.currency-api.pages.dev/v1/currencies/${from}.min.json`);
+    if (res.ok) {
+      const data = await res.json();
+      const rate = data?.[from]?.twd;
+      if (rate && !isNaN(rate)) return rate;
+    }
+  } catch (e) {}
+  // 來源 2：open.er-api.com（免費、無需 Key，作為最終備援）
+  const res = await fetch(`https://open.er-api.com/v6/latest/${encodeURIComponent(fromCode)}`);
   if (!res.ok) throw new Error('rate api error');
   const data = await res.json();
   const rate = data?.rates?.TWD;
