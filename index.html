@@ -36,14 +36,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Helvetica
   min-height: 100vh; 
   padding-bottom: calc(72px + var(--safe-b)); 
   position: relative; 
-  overflow-x: hidden;
-  overflow-y: auto;
   width: 100%;
   box-sizing: border-box;
 }
 
 /* 頁面 */
-.page { display: none; padding: 0 24px 32px; width: 100%; box-sizing: border-box; overflow-x: hidden; }
+.page { display: none; padding: 0 24px 32px; width: 100%; box-sizing: border-box; }
 .page.active { display: block; }
 
 /* 頁首 */
@@ -339,6 +337,11 @@ function todayISO() { return new Date().toISOString().slice(0,10); }
 function nowTime() { const d=new Date(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
 function getCur(code) { return CURRENCIES.find(c=>c.code===code)||{code,name:'',flag:''}; }
 function getRate(trip) { return trip?.lockedRate ?? trip?.currentRate ?? null; }
+// 完整編輯表單可選的信用卡：攜帶的信用卡 + 其他可選信用卡（例如訂機票用的卡）
+function getFormCards(trip) {
+  const ids=[...(trip.tripCards||[]),...(trip.extraCards||[])];
+  return DB.cards.filter(c=>ids.includes(c.id));
+}
 function daysBetween(a,b) { return Math.round((new Date(b)-new Date(a))/86400000)+1; }
 
 // ============================================================
@@ -581,7 +584,7 @@ document.getElementById('app').addEventListener('touchend',e=>{
   // 首頁子頁面右滑回列表
   if(currentTab==='home'&&navStack.home!=='list'&&dx>70&&Math.abs(dx)>Math.abs(dy)*2) {
     if(navStack.home==='detail') navStack.home='list';
-    else if(navStack.home==='create'||navStack.home==='edit') { calStart=null;calEnd=null;calViewYear=null;calViewMonth=null;_tripCards=[]; navStack.home=navStack.home==='edit'?'detail':'list'; }
+    else if(navStack.home==='create'||navStack.home==='edit') { calStart=null;calEnd=null;calViewYear=null;calViewMonth=null;_tripCards=[];_tripExtraCards=[]; navStack.home=navStack.home==='edit'?'detail':'list'; }
     render(); txStart=null; tyStart=null; return;
   }
   if(!inSub&&Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy)*2) {
@@ -604,30 +607,8 @@ function renderHome() {
   else renderTripList();
 }
 
-// 從左側邊緣向右滑動可返回旅程列表（僅用於旅程詳情頁）
-// 使用直接指定 ontouchstart/ontouchend（而非 addEventListener）避免每次 render() 重覆綁定造成監聽器疊加
-let _swipeStartX=null, _swipeStartY=null, _lastTouchStartX=0;
-function attachSwipeBack(el) {
-  el.ontouchstart=function(ev){
-    const t=ev.touches[0];
-    _swipeStartX=t.clientX; _swipeStartY=t.clientY; _lastTouchStartX=t.clientX;
-  };
-  el.ontouchend=function(ev){
-    if(_swipeStartX===null) return;
-    const t=ev.changedTouches[0];
-    const dx=t.clientX-_swipeStartX;
-    const dy=t.clientY-_swipeStartY;
-    _swipeStartX=null; _swipeStartY=null;
-    // 需從畫面左側邊緣附近開始、往右滑動足夠距離、且垂直位移不大（避免與上下捲動衝突）
-    if(_lastTouchStartX<40 && dx>80 && Math.abs(dy)<60 && navStack.home==='detail'){
-      navStack.home='list'; render();
-    }
-  };
-}
-
 function renderTripList() {
   const el=document.getElementById('page-home');
-  el.ontouchstart=null; el.ontouchend=null; // 離開詳情頁時清空滑動返回手勢，避免殘留誤觸
   const trips=[...DB.trips].sort((a,b)=>{
     if(a.status==='active'&&b.status!=='active') return -1;
     if(a.status!=='active'&&b.status==='active') return 1;
@@ -673,13 +654,13 @@ function renderCreateTrip() {
   const trip=editingTripId?DB.trips.find(t=>t.id===editingTripId):null;
   const isEdit=!!trip;
   const el=document.getElementById('page-home');
-  el.ontouchstart=null; el.ontouchend=null; // 避免詳情頁殘留的滑動返回手勢誤觸
 
   if(!calStart) { calStart=trip?.startDate||todayISO(); calEnd=trip?.endDate||todayISO(); }
   if(!calViewYear) { calViewYear=parseInt(calStart.slice(0,4)); calViewMonth=parseInt(calStart.slice(5,7))-1; }
 
   const days=daysBetween(calStart,calEnd);
   const tripCards=_tripCards.length?_tripCards:(trip?.tripCards||[]);
+  const tripExtraCards=_tripExtraCards.length?_tripExtraCards:(trip?.extraCards||[]);
   const cur=trip?getCur(trip.currency):null;
 
   el.innerHTML=`
@@ -777,7 +758,17 @@ function renderCreateTrip() {
             <button class="pill sm ${tripCards.includes(card.id)?'active':''}" onclick="toggleTripCard('${card.id}')">${card.name}</button>
           `).join('')}
         </div>
-        <div style="font-size:11px;color:var(--faint);margin-top:10px">記帳時只顯示這趟帶的卡</div>`:`
+        <div style="font-size:11px;color:var(--faint);margin-top:10px">會出現在「記一筆」的快速選卡列</div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line-light)">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">其他可選信用卡</div>
+          <div style="font-size:11px;color:var(--faint);margin-bottom:10px">例如訂機票用的卡：編輯消費時可以選，但不會出現在快速記帳</div>
+          <div class="pill-row" id="trip-extra-cards-pills">
+            ${DB.cards.map(card=>`
+              <button class="pill sm ${tripExtraCards.includes(card.id)?'active':''}" onclick="toggleTripExtraCard('${card.id}')">${card.name}</button>
+            `).join('')}
+          </div>
+        </div>`:`
         <div style="margin-top:14px;font-size:13px;color:var(--faint)">尚未設定信用卡</div>
         <button class="btn-outline" onclick="navStack.settings='card-form';settingsEditCardId=null;switchTab('settings')" style="margin-top:10px;padding:10px">+ 前往設定信用卡</button>`}
       </div>
@@ -852,6 +843,7 @@ window.toggleCreateAcc=toggleCreateAcc;
 let _accOpenState={};
 
 let _tripCards=[];
+let _tripExtraCards=[];
 function toggleTripCard(id) {
   const idx=_tripCards.indexOf(id);
   if(idx>=0) _tripCards.splice(idx,1); else _tripCards.push(id);
@@ -862,8 +854,18 @@ function toggleTripCard(id) {
 }
 window.toggleTripCard=toggleTripCard;
 
+function toggleTripExtraCard(id) {
+  const idx=_tripExtraCards.indexOf(id);
+  if(idx>=0) _tripExtraCards.splice(idx,1); else _tripExtraCards.push(id);
+  document.querySelectorAll('#trip-extra-cards-pills .pill').forEach(btn=>{
+    const cid=btn.getAttribute('onclick').match(/'([^']+)'/)[1];
+    btn.classList.toggle('active',_tripExtraCards.includes(cid));
+  });
+}
+window.toggleTripExtraCard=toggleTripExtraCard;
+
 function backFromCreateTrip() {
-  calStart=null; calEnd=null; calViewYear=null; calViewMonth=null; _tripCards=[]; _accOpenState={};
+  calStart=null; calEnd=null; calViewYear=null; calViewMonth=null; _tripCards=[]; _tripExtraCards=[]; _accOpenState={};
   if(editingTripId) { navStack.home='detail'; } else { navStack.home='list'; }
   render();
 }
@@ -1033,6 +1035,7 @@ function submitTrip(existingId) {
     personalBudget:document.getElementById('tf-personalbudget')?.value?parseFloat(document.getElementById('tf-personalbudget').value):null,
     dailyBudget:document.getElementById('tf-dailybudget')?.value?parseFloat(document.getElementById('tf-dailybudget').value):null,
     tripCards:_tripCards.length?_tripCards:(existing?.tripCards||[]),
+    extraCards:_tripExtraCards.length?_tripExtraCards:(existing?.extraCards||[]),
     cashAmount:document.getElementById('tf-cash')?.value?parseFloat(document.getElementById('tf-cash').value):null,
     status:existing?.status||'active',
     lockedRate:existing?.lockedRate||null,
@@ -1042,7 +1045,7 @@ function submitTrip(existingId) {
   save('trips');
   showToast(existing?'已儲存變更':'旅程已建立');
   selectedTripId=trip.id;
-  calStart=null;calEnd=null;calViewYear=null;calViewMonth=null;_tripCards=[];
+  calStart=null;calEnd=null;calViewYear=null;calViewMonth=null;_tripCards=[];_tripExtraCards=[];
   navStack.home='detail'; render();
 }
 window.submitTrip=submitTrip;
@@ -1066,7 +1069,6 @@ function renderTripDetail() {
   if(!trip){navStack.home='list';render();return;}
   maybeAutoFetchOnOpen(trip);
   const el=document.getElementById('page-home');
-  attachSwipeBack(el);
   const cur=getCur(trip.currency);
   const rate=getRate(trip);
   const tripExps=DB.expenses.filter(e=>e.tripId===trip.id);
@@ -1369,6 +1371,7 @@ function editTrip(id) {
   calViewYear=parseInt(calStart.slice(0,4));
   calViewMonth=parseInt(calStart.slice(5,7))-1;
   _tripCards=[...(trip?.tripCards||[])];
+  _tripExtraCards=[...(trip?.extraCards||[])];
   _accOpenState={};
   navStack.home='edit'; render();
 }
@@ -1459,7 +1462,7 @@ function renderQuickPanel(trip) {
   if(!qCurrency) qCurrency=trip.currency;
   qPayment=null; qSelectedCardId=null; qCatId=null;
 
-  const tripCards=trip.tripCards?.length?DB.cards.filter(c=>trip.tripCards.includes(c.id)):DB.cards;
+  const tripCards=DB.cards.filter(c=>(trip.tripCards||[]).includes(c.id));
   const rebateRows=tripCards.map(card=>{
     const subs=card.subRates||[];
     if(!subs.length) return null;
@@ -1608,7 +1611,7 @@ function updateQTwd(tripId) {
   const el=document.getElementById('q-twd');
   if(el) el.textContent=amt&&qCurrency!=='TWD'&&rate?`≈ NT$ ${fmtNum(twd)}`:'';
   // 即時顯示每張信用卡狀態
-  const tripCards=trip.tripCards?.length?DB.cards.filter(c=>trip.tripCards.includes(c.id)):DB.cards;
+  const tripCards=DB.cards.filter(c=>(trip.tripCards||[]).includes(c.id));
   tripCards.forEach(card=>{
     const estEl=document.getElementById(`rebate-est-${card.id}`);
     const statusEl=document.getElementById(`rebate-status-${card.id}`);
@@ -1733,7 +1736,7 @@ function renderExpenseForm(trip) {
   const cur=getCur(trip.currency);
   const payeesList=DB.payees[0]?.items||DB.payees||[];
   const tripFunds=(DB.funds||[]).filter(f=>f.tripId===trip.id);
-  const tripCards=trip.tripCards?.length?DB.cards.filter(c=>trip.tripCards.includes(c.id)):DB.cards;
+  const tripCards=getFormCards(trip);
   const tripExps=DB.expenses.filter(e=>e.tripId===trip.id);
 
   const defAmt=e0?.amount??pre.amount??'';
@@ -1933,7 +1936,7 @@ window.setEfPayment=function(pm,tripId) {
   if(pm!=='fund') _efFundId=null;
   document.querySelectorAll('[id^="ef-pm-"]').forEach(b=>b.classList.toggle('active',b.id===`ef-pm-${pm}`));
   const trip=DB.trips.find(t=>t.id===tripId);
-  const tripCards=trip.tripCards?.length?DB.cards.filter(c=>trip.tripCards.includes(c.id)):DB.cards;
+  const tripCards=getFormCards(trip);
   const tripFunds=(DB.funds||[]).filter(f=>f.tripId===tripId);
   const tripExps=DB.expenses.filter(e=>e.tripId===tripId);
   const detail=document.getElementById('ef-payment-detail');
