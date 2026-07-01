@@ -185,7 +185,12 @@ input, textarea, select, button {
       style="width:100%;padding:16px;border-radius:14px;border:1.5px solid var(--line);background:var(--card);font-size:16px;color:var(--text);outline:none;font-family:inherit;text-align:center;margin-bottom:14px">
     <button class="btn-primary" onclick="loginWithSyncCode()">登入 / 建立</button>
     <div id="sync-login-msg" style="text-align:center;font-size:12px;color:var(--faint);margin-top:14px;min-height:16px"></div>
-    <div id="sync-debug" style="margin-top:24px;padding:12px;background:var(--line-light);border-radius:8px;font-size:10px;color:var(--faint);word-break:break-all;text-align:left"></div>
+    <button onclick="
+      const p=new URLSearchParams(location.search);
+      const h=location.hash;
+      const ls=localStorage.getItem('tv_sync_code');
+      alert('網址:'+location.href+'\n\nURL code:'+p.get('code')+'\nhash:'+h+'\nlocalStorage:'+ls+'\nsyncCode變數:'+syncCode);
+    " style="margin-top:16px;background:none;border:1px solid var(--line);border-radius:8px;padding:8px 16px;font-size:11px;color:var(--faint);cursor:pointer;font-family:inherit">除錯資訊</button>
   </div>
 </div>
 
