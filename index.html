@@ -340,7 +340,13 @@ function daysBetween(a,b) { return Math.round((new Date(b)-new Date(a))/86400000
 // ============================================================
 const SUPABASE_URL = 'https://djujrrwnzsddyynplsqx.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqdWpycnduenNkZHl5bnBsc3F4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4MjY5MjUsImV4cCI6MjA5ODQwMjkyNX0.0lm0Nx2EK7CxXCWUa5bAWcVk9v_TQRHoM6UmFFxPjss';
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let sb = null;
+try {
+  if(window.supabase && window.supabase.createClient) {
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+} catch(e) { console.error('Supabase init failed:', e); }
 
 // 網址參數優先（最可靠，不受 iOS standalone 模式 localStorage 不穩定影響）
 let syncCode = (function(){
@@ -366,12 +372,23 @@ async function loginWithSyncCode() {
 
   msg.textContent='連接中...'; msg.style.color='var(--faint)';
 
+  // 如果 Supabase 沒載入，直接用本機資料
+  if(!sb) {
+    syncCode=code; lsSet('sync_code',code);
+    const newUrl=location.pathname+'?code='+encodeURIComponent(code);
+    history.replaceState(null,'',newUrl);
+    document.getElementById('sync-login').style.display='none';
+    document.getElementById('app').style.display='';
+    applyTheme(DB.theme); render();
+    showToast('已登入（離線模式）');
+    return;
+  }
+
   try {
     const { data, error } = await sb.from('app_data').select('data').eq('sync_code', code).maybeSingle();
     if(error) throw error;
 
     if(data) {
-      // 既有代碼：用雲端資料覆蓋本機
       const cloud = data.data || {};
       DB.trips = cloud.trips || [];
       DB.expenses = cloud.expenses || [];
@@ -382,20 +399,18 @@ async function loginWithSyncCode() {
       DB.theme = cloud.theme || 'A';
       ['trips','expenses','cards','categories','payees','funds','theme'].forEach(k=>lsSet(k,DB[k]));
     } else {
-      // 新代碼：把目前本機資料上傳當作初始值
       await sb.from('app_data').insert([{ sync_code: code, data: buildSyncPayload() }]);
     }
 
     syncCode = code;
     lsSet('sync_code', code);
-    // 把代碼寫進網址，這樣即使 localStorage 被清掉，從這個網址打開也能自動登入
     const newUrl = location.pathname + '?code=' + encodeURIComponent(code);
     history.replaceState(null, '', newUrl);
     document.getElementById('sync-login').style.display='none';
     document.getElementById('app').style.display='';
     applyTheme(DB.theme);
     render();
-    showToast('同步成功！建議重新「加入主畫面」以確保網址帶有代碼');
+    showToast('同步成功！');
   } catch(err) {
     console.error(err);
     const detail = err?.message || err?.error_description || JSON.stringify(err);
@@ -413,7 +428,7 @@ function buildSyncPayload() {
 }
 
 function syncToCloud() {
-  if(!syncCode) return;
+  if(!syncCode||!sb) return;
   clearTimeout(_syncSaveTimer);
   _syncSaveTimer = setTimeout(async ()=>{
     try {
@@ -2708,38 +2723,35 @@ window.deleteFundConfirm=deleteFundConfirm;
 // 初始化
 // ============================================================
 function initApp() {
-  // 除錯用：暫時顯示目前狀態，方便排查問題
-  const debugInfo = `URL: ${location.href}\nsyncCode變數: ${syncCode}\nlocalStorage值: ${lsGet('sync_code','(空)')}`;
-  console.log(debugInfo);
-
   if(syncCode) {
-    // 確保網址帶有代碼參數（即使是從 localStorage 讀到的）
+    // 確保網址帶有代碼參數
     const params = new URLSearchParams(location.search);
     if(params.get('code')!==syncCode) {
       history.replaceState(null, '', location.pathname + '?code=' + encodeURIComponent(syncCode));
     }
-    // 已有同步代碼，背景重新拉取雲端最新資料再顯示
+    document.getElementById('sync-login').style.display='none';
     document.getElementById('app').style.display='';
     switchTab('add');
-    sb.from('app_data').select('data').eq('sync_code', syncCode).maybeSingle().then(({data,error})=>{
-      if(!error && data) {
-        const cloud=data.data||{};
-        DB.trips = cloud.trips || DB.trips;
-        DB.expenses = cloud.expenses || DB.expenses;
-        DB.cards = cloud.cards || DB.cards;
-        DB.categories = (cloud.categories&&cloud.categories.length) ? cloud.categories : DB.categories;
-        DB.payees = cloud.payees || DB.payees;
-        DB.funds = cloud.funds || DB.funds;
-        DB.theme = cloud.theme || DB.theme;
-        ['trips','expenses','cards','categories','payees','funds','theme'].forEach(k=>lsSet(k,DB[k]));
-        applyTheme(DB.theme);
-        render();
-      }
-    });
+    // 背景拉取雲端最新資料（如果 Supabase 可用）
+    if(sb) {
+      sb.from('app_data').select('data').eq('sync_code', syncCode).maybeSingle().then(({data,error})=>{
+        if(!error && data) {
+          const cloud=data.data||{};
+          DB.trips = cloud.trips || DB.trips;
+          DB.expenses = cloud.expenses || DB.expenses;
+          DB.cards = cloud.cards || DB.cards;
+          DB.categories = (cloud.categories&&cloud.categories.length) ? cloud.categories : DB.categories;
+          DB.payees = cloud.payees || DB.payees;
+          DB.funds = cloud.funds || DB.funds;
+          DB.theme = cloud.theme || DB.theme;
+          ['trips','expenses','cards','categories','payees','funds','theme'].forEach(k=>lsSet(k,DB[k]));
+          applyTheme(DB.theme);
+          render();
+        }
+      }).catch(e=>console.error('背景同步失敗',e));
+    }
   } else {
     document.getElementById('sync-login').style.display='flex';
-    const dbg=document.getElementById('sync-debug');
-    if(dbg) dbg.textContent='偵錯資訊：\n'+debugInfo;
   }
 }
 initApp();
