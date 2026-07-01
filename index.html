@@ -45,8 +45,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Helvetica
 .page.active { display: block; }
 
 /* 頁首 */
-.page-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 20px 0 16px; position: sticky; top: 0; background: var(--bg); z-index: 10; }
-.sticky-footer-btn { position: sticky; bottom: calc(72px + var(--safe-b)); background: var(--bg); padding: 14px 0 10px; margin-top: 20px; z-index: 8; }
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 20px 0 16px; position: -webkit-sticky; position: sticky; top: 0; background: var(--bg); z-index: 10; }
+.sticky-footer-btn { position: -webkit-sticky; position: sticky; bottom: calc(72px + var(--safe-b)); background: var(--bg); padding: 14px 0 10px; margin-top: 20px; z-index: 8; }
 .page-subtitle { font-size: 11px; color: var(--faint); letter-spacing: .12em; margin-bottom: 2px; text-transform: uppercase; }
 .page-title { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
 .back-btn { background: none; border: none; cursor: pointer; color: var(--sub); padding: 4px; margin-left: -8px; margin-top: 2px; display: flex; }
@@ -586,6 +586,10 @@ document.getElementById('app').addEventListener('touchend',e=>{
     if(navStack.home==='detail') navStack.home='list';
     else if(navStack.home==='create'||navStack.home==='edit') { calStart=null;calEnd=null;calViewYear=null;calViewMonth=null;_tripCards=[];_tripExtraCards=[]; navStack.home=navStack.home==='edit'?'detail':'list'; }
     render(); txStart=null; tyStart=null; return;
+  }
+  // 記帳頁的編輯/補充細節表單右滑返回
+  if(currentTab==='add'&&addSubView!=='quick'&&dx>70&&Math.abs(dx)>Math.abs(dy)*2) {
+    backFromForm(); txStart=null; tyStart=null; return;
   }
   if(!inSub&&Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy)*2) {
     const idx=TABS.indexOf(currentTab);
@@ -1179,43 +1183,45 @@ function renderTripDetail() {
     }).join('');
 
   el.innerHTML=`
-    <div class="page-header">
-      <div style="display:flex;align-items:center;gap:4px">
-        <button class="back-btn" onclick="navStack.home='list';render()">${ico('back',22)}</button>
-        <div><div class="page-subtitle">${trip.status==='active'?'進行中':'已結束'}</div><div class="page-title">${trip.name}</div></div>
+    <div style="position:-webkit-sticky;position:sticky;top:0;background:var(--bg);z-index:9;padding-bottom:8px">
+      <div class="page-header" style="position:static">
+        <div style="display:flex;align-items:center;gap:4px">
+          <button class="back-btn" onclick="navStack.home='list';render()">${ico('back',22)}</button>
+          <div><div class="page-subtitle">${trip.status==='active'?'進行中':'已結束'}</div><div class="page-title">${trip.name}</div></div>
+        </div>
+        <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--sub);font-family:inherit" onclick="editTrip('${trip.id}')">編輯</button>
       </div>
-      <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--sub);font-family:inherit" onclick="editTrip('${trip.id}')">編輯</button>
-    </div>
 
-    <!-- 匯率（精簡為一行,操作移到編輯頁） -->
-    <div style="font-size:12px;color:${rate?'var(--faint)':'var(--accent)'};margin-bottom:14px">
-      ${rate?`${trip.currency} 1 ≈ TWD ${fmtRate(rate)}`:`匯率未設定，前往「編輯」設定`}
-    </div>
+      <!-- 匯率（精簡為一行,操作移到編輯頁） -->
+      <div style="font-size:12px;color:${rate?'var(--faint)':'var(--accent)'};margin-bottom:14px">
+        ${rate?`${trip.currency} 1 ≈ TWD ${fmtRate(rate)}`:`匯率未設定，前往「編輯」設定`}
+      </div>
 
-    <!-- 個人/旅程切換 -->
-    <div class="pill-row" style="margin-bottom:16px">
-      <button class="pill ${detailViewMode==='personal'?'active':''}" onclick="setDetailMode('personal')">個人</button>
-      <button class="pill ${detailViewMode==='trip'?'active':''}" onclick="setDetailMode('trip')">旅程</button>
-    </div>
+      <!-- 個人/旅程切換 -->
+      <div class="pill-row" style="margin-bottom:16px">
+        <button class="pill ${detailViewMode==='personal'?'active':''}" onclick="setDetailMode('personal')">個人</button>
+        <button class="pill ${detailViewMode==='trip'?'active':''}" onclick="setDetailMode('trip')">旅程</button>
+      </div>
 
-    <!-- 合計（換算台幣為主視覺） -->
-    <div style="font-size:11px;color:var(--faint);font-weight:700;letter-spacing:.06em;margin-bottom:2px">合計（換算台幣）</div>
-    <div style="font-size:38px;font-weight:700;letter-spacing:-.02em;line-height:1.1;margin-bottom:4px">NT$ ${fmtNum(totalTwd)}</div>
-    <div style="font-size:12px;color:var(--sub);margin-bottom:10px">${displayExps.length} 筆消費${curCodes.length>1?` · 涵蓋 ${curCodes.length} 種幣別`:''}</div>
+      <!-- 合計（換算台幣為主視覺） -->
+      <div style="font-size:11px;color:var(--faint);font-weight:700;letter-spacing:.06em;margin-bottom:2px">合計（換算台幣）</div>
+      <div style="font-size:38px;font-weight:700;letter-spacing:-.02em;line-height:1.1;margin-bottom:4px">NT$ ${fmtNum(totalTwd)}</div>
+      <div style="font-size:12px;color:var(--sub);margin-bottom:10px">${displayExps.length} 筆消費${curCodes.length>1?` · 涵蓋 ${curCodes.length} 種幣別`:''}</div>
 
-    <!-- 幣別明細 -->
-    ${curCodes.length?`<div style="margin-bottom:14px">${curLinesHtml}</div>`:''}
+      <!-- 幣別明細 -->
+      ${curCodes.length?`<div style="margin-bottom:14px">${curLinesHtml}</div>`:''}
 
-    <div style="font-size:13px;color:var(--sub);margin-bottom:20px">
-      今日 NT$ ${fmtNum(todaySpentTwd)}
-      <span style="margin:0 8px">·</span>
-      <span style="color:var(--green)">預估回饋 NT$ ${fmtNum(totalRebate)}</span>
-      ${tripFunds.length?`<span style="margin:0 8px">·</span>公基金剩餘 ${cur.code} ${fmtNum(fundRemaining)}`:''}
+      <div style="font-size:13px;color:var(--sub);margin-bottom:14px">
+        今日 NT$ ${fmtNum(todaySpentTwd)}
+        <span style="margin:0 8px">·</span>
+        <span style="color:var(--green)">預估回饋 NT$ ${fmtNum(totalRebate)}</span>
+        ${tripFunds.length?`<span style="margin:0 8px">·</span>公基金剩餘 ${cur.code} ${fmtNum(fundRemaining)}`:''}
+      </div>
+
+      <div style="font-size:15px;font-weight:700;border-top:1px solid var(--line-light);padding-top:14px">消費紀錄</div>
     </div>
 
     ${budgetHtml}
-
-    <div style="font-size:15px;font-weight:700;margin-bottom:16px">消費紀錄</div>
     ${timelineHtml}`;
 }
 
