@@ -49,7 +49,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Helvetica
 
 /* 頁首 */
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 20px 0 16px; position: -webkit-sticky; position: sticky; top: 0; background: var(--bg); z-index: 10; }
-.sticky-footer-btn { position: -webkit-sticky; position: sticky; bottom: calc(72px + var(--safe-b)); background: var(--bg); padding: 14px 0 10px; margin-top: 20px; z-index: 8; }
+.sticky-footer-btn { position: fixed; bottom: calc(72px + var(--safe-b)); left: 0; right: 0; max-width: 480px; margin: 0 auto; background: var(--bg); padding: 14px 24px calc(10px + var(--safe-b)); z-index: 40; box-shadow: 0 -8px 16px -8px rgba(43,42,40,.08); }
 .page-subtitle { font-size: 11px; color: var(--faint); letter-spacing: .12em; margin-bottom: 2px; text-transform: uppercase; }
 .page-title { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
 .back-btn { background: none; border: none; cursor: pointer; color: var(--sub); padding: 4px; margin-left: -8px; margin-top: 2px; display: flex; }
@@ -1882,6 +1882,7 @@ function renderExpenseForm(trip) {
         <div style="flex:1"><div class="field-label">地點</div><input class="field-input" id="ef-location" value="${e0?.location||''}" placeholder="例：澀谷"></div>
       </div>
       <div class="field-group"><div class="field-label">備註</div><textarea class="field-input" id="ef-note" style="min-height:60px;resize:vertical">${e0?.note||''}</textarea></div>
+      <div style="height:76px"></div>
     </div>
 
     <div class="sticky-footer-btn"><button class="btn-primary" onclick="submitExpense('${trip.id}','${e0?.id||''}')">${e0?'儲存變更':'新增消費'}</button></div>`;
