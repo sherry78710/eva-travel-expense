@@ -320,6 +320,7 @@ const ICONS = {
   creditcard:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>`,
   banknote:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="12" y1="9" x2="12" y2="15"/><path d="M8 12a4 4 0 0 1 8 0"/></svg>`,
   person:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+  refresh:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>`,
 };
 function ico(name, size=18, color='currentColor') {
   const svg = ICONS[name] || ICONS.box;
@@ -1019,6 +1020,7 @@ let detailViewMode='personal';
 function renderTripDetail() {
   const trip=DB.trips.find(t=>t.id===selectedTripId);
   if(!trip){navStack.home='list';render();return;}
+  maybeAutoFetchOnOpen(trip);
   const el=document.getElementById('page-home');
   const cur=getCur(trip.currency);
   const rate=getRate(trip);
@@ -1148,18 +1150,88 @@ function renderTripDetail() {
     ${timelineHtml}`;
 }
 
+// ============================================================
+// 匯率自動抓取 (Frankfurter API - 免費/無需 Key)
+// 若外部網路無法連線（例如開發沙盒環境），會靜默失敗並保留手動輸入選項
+// ============================================================
+let _rateFetching = false;
+const _autoFetchedKey = new Set(); // 避免同一旅程同一天重複自動抓取
+
+function rateCacheKey(code) { return `tv_rate_${code}_${todayISO()}`; }
+
+async function fetchRateFromAPI(fromCode) {
+  // TWD 與外幣皆由 Frankfurter 提供，一次抓 1 單位外幣兌多少 TWD
+  const url = `https://api.frankfurter.app/latest?amount=1&from=${encodeURIComponent(fromCode)}&to=TWD`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('rate api error');
+  const data = await res.json();
+  const rate = data?.rates?.TWD;
+  if (!rate || isNaN(rate)) throw new Error('rate not found');
+  return rate;
+}
+
+async function autoFetchRate(tripId, silent=false) {
+  const trip = DB.trips.find(t=>t.id===tripId);
+  if (!trip || trip.lockedRate) return;
+  if (_rateFetching) return;
+  _rateFetching = true;
+  const btn = document.getElementById('rate-auto-btn');
+  if (btn && !silent) { btn.style.opacity='0.5'; btn.style.pointerEvents='none'; }
+
+  try {
+    const rate = await fetchRateFromAPI(trip.currency);
+    // 快取今天已抓過，避免同一天重複打 API
+    try { localStorage.setItem(rateCacheKey(trip.currency), String(rate)); } catch(e){}
+    DB.trips = DB.trips.map(t=>t.id===tripId?{...t, currentRate:rate, rateSource:'auto', rateFetchedAt:new Date().toISOString()}:t);
+    save('trips');
+    if (!silent) showToast(`已自動抓取匯率：1 ${trip.currency} ≈ TWD ${fmtRate(rate)}`);
+    if (selectedTripId===tripId) renderTripDetail();
+  } catch (err) {
+    if (!silent) showToast('自動抓取匯率失敗，請改用手動輸入或檢查網路連線');
+  } finally {
+    _rateFetching = false;
+    if (btn) { btn.style.opacity='1'; btn.style.pointerEvents='auto'; }
+  }
+}
+window.autoFetchRate = autoFetchRate;
+
+// 進入旅程詳情頁時，若尚未設定匯率，靜默嘗試自動抓取一次（同一旅程同一天只嘗試一次）
+function maybeAutoFetchOnOpen(trip) {
+  if (!trip || trip.status!=='active' || trip.lockedRate) return;
+  const key = trip.id + '_' + todayISO();
+  if (_autoFetchedKey.has(key)) return;
+  _autoFetchedKey.add(key);
+  if (trip.currentRate) return; // 已有匯率（手動或先前自動抓取過）就不主動打擾
+  // 先看今天是否已經快取過這個幣別的匯率，有的話直接用，不必打 API
+  try {
+    const cached = localStorage.getItem(rateCacheKey(trip.currency));
+    if (cached) {
+      DB.trips = DB.trips.map(t=>t.id===trip.id?{...t, currentRate:parseFloat(cached), rateSource:'auto'}:t);
+      save('trips');
+      if (selectedTripId===trip.id) renderTripDetail();
+      return;
+    }
+  } catch(e){}
+  autoFetchRate(trip.id, true);
+}
+
 function buildRateSection(trip) {
   const cur=getCur(trip.currency);
   const rate=getRate(trip);
+  const canEdit = trip.status==='active' && !trip.lockedRate;
   return `
-    <div style="display:flex;align-items:center;gap:8px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <div style="font-size:13px;color:${rate?'var(--sub)':'var(--accent)'}">
         ${rate?`${cur.code} 1 ≈ TWD ${fmtRate(rate)}`:'匯率未設定'}
         ${trip.lockedRate?`<span style="font-size:10px;color:var(--faint);border:1px solid var(--line);padding:2px 6px;border-radius:999px;margin-left:6px">已鎖定</span>`:''}
+        ${!trip.lockedRate&&rate&&trip.rateSource==='auto'?`<span style="font-size:10px;color:var(--faint);margin-left:6px">（自動抓取）</span>`:''}
       </div>
-      ${trip.status==='active'&&!trip.lockedRate?`
+      ${canEdit?`
+        <button onclick="autoFetchRate('${trip.id}')" id="rate-auto-btn" style="display:flex;align-items:center;gap:4px;background:none;border:1px solid var(--line);border-radius:999px;padding:4px 10px;cursor:pointer;font-size:11px;color:var(--sub);font-family:inherit">
+          ${ico('refresh',11,'var(--accent)')} ${rate?'重新抓取':'自動抓取'}
+        </button>
         <button onclick="showRateInput('${trip.id}')" style="display:flex;align-items:center;gap:4px;background:none;border:1px solid var(--line);border-radius:999px;padding:4px 10px;cursor:pointer;font-size:11px;color:var(--sub);font-family:inherit">
-          ${ico('edit',11,'var(--accent)')} ${rate?'修改匯率':'設定匯率'}
+          ${ico('edit',11,'var(--accent)')} ${rate?'手動修改':'手動輸入'}
         </button>`:''}
     </div>
     <div id="rate-input-area" style="display:none;margin-top:10px">
@@ -1183,7 +1255,7 @@ window.showRateInput=showRateInput;
 function confirmRate(tripId) {
   const v=parseFloat(document.getElementById('rate-val-input')?.value);
   if(!isNaN(v)&&v>0) {
-    DB.trips=DB.trips.map(t=>t.id===tripId?{...t,currentRate:v}:t);
+    DB.trips=DB.trips.map(t=>t.id===tripId?{...t,currentRate:v,rateSource:'manual'}:t);
     save('trips'); showToast(`匯率已更新：${v}`);
     renderTripDetail();
   }
