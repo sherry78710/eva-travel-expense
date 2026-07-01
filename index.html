@@ -48,6 +48,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Helvetica
 
 /* 頁首 */
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 20px 0 16px; position: sticky; top: 0; background: var(--bg); z-index: 10; }
+.sticky-footer-btn { position: sticky; bottom: calc(72px + var(--safe-b)); background: var(--bg); padding: 14px 0 10px; margin-top: 20px; z-index: 8; }
 .page-subtitle { font-size: 11px; color: var(--faint); letter-spacing: .12em; margin-bottom: 2px; text-transform: uppercase; }
 .page-title { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
 .back-btn { background: none; border: none; cursor: pointer; color: var(--sub); padding: 4px; margin-left: -8px; margin-top: 2px; display: flex; }
@@ -603,8 +604,30 @@ function renderHome() {
   else renderTripList();
 }
 
+// 從左側邊緣向右滑動可返回旅程列表（僅用於旅程詳情頁）
+// 使用直接指定 ontouchstart/ontouchend（而非 addEventListener）避免每次 render() 重覆綁定造成監聽器疊加
+let _swipeStartX=null, _swipeStartY=null, _lastTouchStartX=0;
+function attachSwipeBack(el) {
+  el.ontouchstart=function(ev){
+    const t=ev.touches[0];
+    _swipeStartX=t.clientX; _swipeStartY=t.clientY; _lastTouchStartX=t.clientX;
+  };
+  el.ontouchend=function(ev){
+    if(_swipeStartX===null) return;
+    const t=ev.changedTouches[0];
+    const dx=t.clientX-_swipeStartX;
+    const dy=t.clientY-_swipeStartY;
+    _swipeStartX=null; _swipeStartY=null;
+    // 需從畫面左側邊緣附近開始、往右滑動足夠距離、且垂直位移不大（避免與上下捲動衝突）
+    if(_lastTouchStartX<40 && dx>80 && Math.abs(dy)<60 && navStack.home==='detail'){
+      navStack.home='list'; render();
+    }
+  };
+}
+
 function renderTripList() {
   const el=document.getElementById('page-home');
+  el.ontouchstart=null; el.ontouchend=null; // 離開詳情頁時清空滑動返回手勢，避免殘留誤觸
   const trips=[...DB.trips].sort((a,b)=>{
     if(a.status==='active'&&b.status!=='active') return -1;
     if(a.status!=='active'&&b.status==='active') return 1;
@@ -650,6 +673,7 @@ function renderCreateTrip() {
   const trip=editingTripId?DB.trips.find(t=>t.id===editingTripId):null;
   const isEdit=!!trip;
   const el=document.getElementById('page-home');
+  el.ontouchstart=null; el.ontouchend=null; // 避免詳情頁殘留的滑動返回手勢誤觸
 
   if(!calStart) { calStart=trip?.startDate||todayISO(); calEnd=trip?.endDate||todayISO(); }
   if(!calViewYear) { calViewYear=parseInt(calStart.slice(0,4)); calViewMonth=parseInt(calStart.slice(5,7))-1; }
@@ -715,6 +739,24 @@ function renderCreateTrip() {
 
     <!-- 選填區塊標題 -->
     <div style="font-size:11px;color:var(--faint);font-weight:600;letter-spacing:.12em;text-transform:uppercase;margin:20px 0 10px">選填設定</div>
+
+    <!-- 旅程匯率手風琴 -->
+    ${isEdit?`
+    <div style="background:var(--card);border-radius:16px;border:1px solid var(--line);overflow:hidden;margin-bottom:8px">
+      <button onclick="toggleCreateAcc('rate')" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border:none;background:transparent;cursor:pointer;font-family:inherit">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:28px;height:28px;border-radius:8px;background:var(--accent-light);display:flex;align-items:center;justify-content:center;color:var(--accent)">${ico('refresh',14)}</div>
+          <span style="font-size:14px;font-weight:700;color:var(--text)">旅程匯率</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="rate-acc-badge" style="font-size:11px;color:var(--faint);background:var(--line-light);padding:2px 8px;border-radius:999px">${getRate(trip)?`1≈${fmtRate(getRate(trip))}`:'未設定'}</span>
+          <span id="rate-acc-chev" style="color:var(--faint);transition:transform .2s;display:flex;${_accOpenState.rate?'transform:rotate(180deg)':''}">${ico('chevdown',16)}</span>
+        </div>
+      </button>
+      <div id="rate-acc-body" style="display:${_accOpenState.rate?'block':'none'};padding:0 16px 16px;border-top:1px solid var(--line-light)">
+        ${buildRateAccordionBody(trip)}
+      </div>
+    </div>`:''}
 
     <!-- 信用卡手風琴 -->
     <div style="background:var(--card);border-radius:16px;border:1px solid var(--line);overflow:hidden;margin-bottom:8px">
@@ -804,8 +846,10 @@ function toggleCreateAcc(id) {
   const isOpen=body.style.display!=='none';
   body.style.display=isOpen?'none':'block';
   if(chev) chev.style.transform=isOpen?'':'rotate(180deg)';
+  _accOpenState[id]=!isOpen;
 }
 window.toggleCreateAcc=toggleCreateAcc;
+let _accOpenState={};
 
 let _tripCards=[];
 function toggleTripCard(id) {
@@ -819,7 +863,7 @@ function toggleTripCard(id) {
 window.toggleTripCard=toggleTripCard;
 
 function backFromCreateTrip() {
-  calStart=null; calEnd=null; calViewYear=null; calViewMonth=null; _tripCards=[];
+  calStart=null; calEnd=null; calViewYear=null; calViewMonth=null; _tripCards=[]; _accOpenState={};
   if(editingTripId) { navStack.home='detail'; } else { navStack.home='list'; }
   render();
 }
@@ -1022,6 +1066,7 @@ function renderTripDetail() {
   if(!trip){navStack.home='list';render();return;}
   maybeAutoFetchOnOpen(trip);
   const el=document.getElementById('page-home');
+  attachSwipeBack(el);
   const cur=getCur(trip.currency);
   const rate=getRate(trip);
   const tripExps=DB.expenses.filter(e=>e.tripId===trip.id);
@@ -1029,12 +1074,28 @@ function renderTripDetail() {
   const displayExps=detailViewMode==='personal'?personalExps:tripExps;
   const today=todayISO();
 
-  // 將任一筆消費換算成「旅程幣別」金額（若本身就是旅程幣別則原樣返回，否則透過 TWD 用目前匯率換算）
-  const toTripCur=(e)=>e.currency===trip.currency?(e.amount||0):(rate?(e.twdAmount||0)/rate:0);
-
-  const totalSpent=displayExps.reduce((s,e)=>s+toTripCur(e),0);
-  const totalTwd=displayExps.reduce((s,e)=>s+(e.twdAmount||0),0);
-  const todaySpent=personalExps.filter(e=>e.date===today).reduce((s,e)=>s+toTripCur(e),0);
+  // 依幣別分組小計（用於總覽的幣別明細行）
+  const curTotals={};
+  displayExps.forEach(e=>{
+    const code=e.currency||trip.currency;
+    if(!curTotals[code]) curTotals[code]={amt:0,twd:0,count:0};
+    curTotals[code].amt+=e.amount||0;
+    curTotals[code].twd+=e.twdAmount||0;
+    curTotals[code].count++;
+  });
+  const curCodes=Object.keys(curTotals);
+  const totalTwd=curCodes.reduce((s,code)=>s+curTotals[code].twd,0);
+  const curLinesHtml=curCodes.map(code=>{
+    const t=curTotals[code];
+    const cInfo=getCur(code);
+    const mainLabel=code==='TWD'?`NT$ ${fmtNum(t.amt)}`:`${code} ${fmtNum(t.amt)}`;
+    return `<div style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--sub);padding:3px 0">
+      <span>${cInfo.flag||''}</span>
+      <b style="color:var(--text);font-weight:600">${mainLabel}</b>
+      ${code!=='TWD'?`<span style="color:var(--faint);font-size:11px">≈NT$${fmtNum(t.twd)}</span>`:''}
+    </div>`;
+  }).join('');
+  const todaySpentTwd=personalExps.filter(e=>e.date===today).reduce((s,e)=>s+(e.twdAmount||0),0);
   const totalRebate=personalExps.reduce((sum,e)=>{
     if(e.payment!=='credit'||!e.cardId||!e.subRateId) return sum;
     const card=DB.cards.find(c=>c.id===e.cardId);
@@ -1075,13 +1136,13 @@ function renderTripDetail() {
     `<div class="empty-state"><div class="empty-title" style="font-size:14px">還沒有消費紀錄</div><div class="empty-sub">點底部「記帳」新增第一筆消費</div></div>`:
     sortedDates.map(date=>{
       const items=grouped[date].sort((a,b)=>(b.time||'').localeCompare(a.time||''));
-      const dayTotal=items.reduce((s,e)=>s+toTripCur(e),0);
+      const dayTotal=items.reduce((s,e)=>s+(e.twdAmount||0),0);
       const weekday=WEEKDAYS[new Date(date).getDay()];
       return `
         <div style="margin-bottom:24px">
           <div style="display:flex;justify-content:space-between;margin-bottom:12px">
             <span style="font-size:12px;font-weight:700;color:var(--sub)">${date.slice(5).replace('-','/')} · 星期${weekday}</span>
-            <span style="font-size:12px;color:var(--faint)">${cur.code} ${fmtNum(dayTotal)}</span>
+            <span style="font-size:12px;color:var(--faint)">NT$ ${fmtNum(dayTotal)}</span>
           </div>
           <div class="timeline">
             ${items.map((e,idx)=>{
@@ -1124,9 +1185,9 @@ function renderTripDetail() {
       <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--sub);font-family:inherit" onclick="editTrip('${trip.id}')">編輯</button>
     </div>
 
-    <!-- 匯率 -->
-    <div style="margin-bottom:20px" id="rate-section">
-      ${buildRateSection(trip)}
+    <!-- 匯率（精簡為一行,操作移到編輯頁） -->
+    <div style="font-size:12px;color:${rate?'var(--faint)':'var(--accent)'};margin-bottom:14px">
+      ${rate?`${trip.currency} 1 ≈ TWD ${fmtRate(rate)}`:`匯率未設定，前往「編輯」設定`}
     </div>
 
     <!-- 個人/旅程切換 -->
@@ -1135,19 +1196,22 @@ function renderTripDetail() {
       <button class="pill ${detailViewMode==='trip'?'active':''}" onclick="setDetailMode('trip')">旅程</button>
     </div>
 
-    <!-- 總覽 -->
-    <div style="font-size:40px;font-weight:700;letter-spacing:-.02em;line-height:1.1;margin-bottom:4px">${cur.code} ${fmtNum(totalSpent)}</div>
-    <div style="font-size:13px;color:var(--faint);margin-bottom:8px">≈ NT$ ${fmtNum(totalTwd)} · ${displayExps.length} 筆</div>
+    <!-- 合計（換算台幣為主視覺） -->
+    <div style="font-size:11px;color:var(--faint);font-weight:700;letter-spacing:.06em;margin-bottom:2px">合計（換算台幣）</div>
+    <div style="font-size:38px;font-weight:700;letter-spacing:-.02em;line-height:1.1;margin-bottom:4px">NT$ ${fmtNum(totalTwd)}</div>
+    <div style="font-size:12px;color:var(--sub);margin-bottom:10px">${displayExps.length} 筆消費${curCodes.length>1?` · 涵蓋 ${curCodes.length} 種幣別`:''}</div>
+
+    <!-- 幣別明細 -->
+    ${curCodes.length?`<div style="margin-bottom:14px">${curLinesHtml}</div>`:''}
+
     <div style="font-size:13px;color:var(--sub);margin-bottom:20px">
-      今日 ${cur.code} ${fmtNum(todaySpent)}
+      今日 NT$ ${fmtNum(todaySpentTwd)}
       <span style="margin:0 8px">·</span>
       <span style="color:var(--green)">預估回饋 NT$ ${fmtNum(totalRebate)}</span>
       ${tripFunds.length?`<span style="margin:0 8px">·</span>公基金剩餘 ${cur.code} ${fmtNum(fundRemaining)}`:''}
     </div>
 
     ${budgetHtml}
-
-    ${trip.status==='active'?`<button class="btn-ghost" style="margin-bottom:20px" onclick="endTripConfirm('${trip.id}')">結束此旅程並鎖定平均匯率</button>`:''}
 
     <div style="font-size:15px;font-weight:700;margin-bottom:16px">消費紀錄</div>
     ${timelineHtml}`;
@@ -1206,7 +1270,7 @@ async function autoFetchRate(tripId, silent=false) {
     DB.trips = DB.trips.map(t=>t.id===tripId?{...t, currentRate:rate, rateSource:'auto', rateFetchedAt:new Date().toISOString()}:t);
     save('trips');
     if (!silent) showToast(`已自動抓取匯率：1 ${trip.currency} ≈ TWD ${fmtRate(rate)}`);
-    if (selectedTripId===tripId) renderTripDetail();
+    reRenderAfterRateChange(tripId);
   } catch (err) {
     if (!silent) showToast('自動抓取匯率失敗，請改用手動輸入或檢查網路連線');
   } finally {
@@ -1215,6 +1279,12 @@ async function autoFetchRate(tripId, silent=false) {
   }
 }
 window.autoFetchRate = autoFetchRate;
+
+// 匯率變更後，依目前所在畫面重新渲染正確的頁面（編輯旅程頁 或 旅程詳情頁）
+function reRenderAfterRateChange(tripId) {
+  if (navStack.home==='edit' && editingTripId===tripId) renderCreateTrip();
+  else if (selectedTripId===tripId) renderTripDetail();
+}
 
 // 進入旅程詳情頁時，若尚未設定匯率，靜默嘗試自動抓取一次（同一旅程同一天只嘗試一次）
 function maybeAutoFetchOnOpen(trip) {
@@ -1236,35 +1306,39 @@ function maybeAutoFetchOnOpen(trip) {
   autoFetchRate(trip.id, true);
 }
 
-function buildRateSection(trip) {
-  const cur=getCur(trip.currency);
+function buildRateAccordionBody(trip) {
   const rate=getRate(trip);
-  const canEdit = trip.status==='active' && !trip.lockedRate;
+  const canEdit=trip.status==='active' && !trip.lockedRate;
   return `
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <div style="font-size:13px;color:${rate?'var(--sub)':'var(--accent)'}">
-        ${rate?`${cur.code} 1 ≈ TWD ${fmtRate(rate)}`:'匯率未設定'}
-        ${trip.lockedRate?`<span style="font-size:10px;color:var(--faint);border:1px solid var(--line);padding:2px 6px;border-radius:999px;margin-left:6px">已鎖定</span>`:''}
-        ${!trip.lockedRate&&rate&&trip.rateSource==='auto'?`<span style="font-size:10px;color:var(--faint);margin-left:6px">（自動抓取）</span>`:''}
-      </div>
-      ${canEdit?`
-        <button onclick="autoFetchRate('${trip.id}')" id="rate-auto-btn" style="display:flex;align-items:center;gap:4px;background:none;border:1px solid var(--line);border-radius:999px;padding:4px 10px;cursor:pointer;font-size:11px;color:var(--sub);font-family:inherit">
-          ${ico('refresh',11,'var(--accent)')} ${rate?'重新抓取':'自動抓取'}
-        </button>
-        <button onclick="showRateInput('${trip.id}')" style="display:flex;align-items:center;gap:4px;background:none;border:1px solid var(--line);border-radius:999px;padding:4px 10px;cursor:pointer;font-size:11px;color:var(--sub);font-family:inherit">
-          ${ico('edit',11,'var(--accent)')} ${rate?'手動修改':'手動輸入'}
-        </button>`:''}
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--line-light);font-size:13px;color:var(--sub)">
+      <span>目前匯率</span>
+      <span style="color:var(--text);font-weight:700">
+        ${rate?`${trip.currency} 1 ≈ TWD ${fmtRate(rate)}`:'尚未設定'}
+        ${trip.lockedRate?`<span style="font-size:10px;color:var(--faint);border:1px solid var(--line);padding:2px 6px;border-radius:999px;margin-left:6px;font-weight:400">已鎖定</span>`:''}
+        ${canEdit&&rate&&trip.rateSource==='auto'?`<span style="font-size:10px;color:var(--faint);margin-left:6px;font-weight:400">（自動抓取）</span>`:''}
+      </span>
     </div>
+    ${canEdit?`
+    <button onclick="autoFetchRate('${trip.id}')" id="rate-auto-btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;padding:12px 0;border:none;border-bottom:1px solid var(--line-light);background:none;cursor:pointer;font-family:inherit;text-align:left">
+      <span style="font-size:13px;color:var(--sub)">自動抓取最新匯率</span>
+      <span style="font-size:12px;color:var(--accent);font-weight:700;display:flex;align-items:center;gap:4px">${ico('refresh',12,'var(--accent)')} ${rate?'重新抓取':'抓取'}</span>
+    </button>
+    <button onclick="showRateInput('${trip.id}')" style="width:100%;display:flex;justify-content:space-between;align-items:center;padding:12px 0;border:none;background:none;cursor:pointer;font-family:inherit;text-align:left">
+      <span style="font-size:13px;color:var(--sub)">手動輸入匯率</span>
+      <span style="font-size:12px;color:var(--accent);font-weight:700">修改 ›</span>
+    </button>
     <div id="rate-input-area" style="display:none;margin-top:10px">
       <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:13px;color:var(--sub);flex-shrink:0">1 ${cur.code} =</span>
+        <span style="font-size:13px;color:var(--sub);flex-shrink:0">1 ${trip.currency} =</span>
         <input type="number" inputmode="decimal" class="rate-input" id="rate-val-input" placeholder="${rate?fmtRate(rate):'例：0.2108'}"
           onkeydown="if(event.key==='Enter')confirmRate('${trip.id}')">
         <span style="font-size:13px;color:var(--sub);flex-shrink:0">TWD</span>
         <button onclick="confirmRate('${trip.id}')" style="background:var(--accent);border:none;border-radius:999px;padding:6px 14px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;font-family:inherit;flex-shrink:0">確定</button>
         <button onclick="document.getElementById('rate-input-area').style.display='none'" style="background:none;border:none;cursor:pointer;color:var(--faint)">${ico('x',16)}</button>
       </div>
-    </div>`;
+    </div>
+    <a onclick="endTripConfirm('${trip.id}')" style="display:inline-block;margin-top:14px;font-size:12.5px;color:var(--sub);text-decoration:underline;cursor:pointer">結束此旅程並鎖定平均匯率</a>
+    `:trip.lockedRate?`<div style="font-size:12px;color:var(--faint);padding-top:10px">此旅程已結束，匯率已鎖定為期間內所有消費的加權平均值，無法再修改。</div>`:''}`;
 }
 
 function showRateInput(tripId) {
@@ -1276,9 +1350,10 @@ window.showRateInput=showRateInput;
 function confirmRate(tripId) {
   const v=parseFloat(document.getElementById('rate-val-input')?.value);
   if(!isNaN(v)&&v>0) {
+    const trip=DB.trips.find(t=>t.id===tripId);
     DB.trips=DB.trips.map(t=>t.id===tripId?{...t,currentRate:v,rateSource:'manual'}:t);
-    save('trips'); showToast(`匯率已更新：${v}`);
-    renderTripDetail();
+    save('trips'); showToast(`匯率已更新：${trip?.currency||''} 1 ≈ TWD ${v}`);
+    reRenderAfterRateChange(tripId);
   }
 }
 window.confirmRate=confirmRate;
@@ -1294,6 +1369,7 @@ function editTrip(id) {
   calViewYear=parseInt(calStart.slice(0,4));
   calViewMonth=parseInt(calStart.slice(5,7))-1;
   _tripCards=[...(trip?.tripCards||[])];
+  _accOpenState={};
   navStack.home='edit'; render();
 }
 window.editTrip=editTrip;
@@ -1792,7 +1868,7 @@ function renderExpenseForm(trip) {
       <div class="field-group"><div class="field-label">備註</div><textarea class="field-input" id="ef-note" style="min-height:60px;resize:vertical">${e0?.note||''}</textarea></div>
     </div>
 
-    <button class="btn-primary" onclick="submitExpense('${trip.id}','${e0?.id||''}')">${e0?'儲存變更':'新增消費'}</button>`;
+    <div class="sticky-footer-btn"><button class="btn-primary" onclick="submitExpense('${trip.id}','${e0?.id||''}')">${e0?'儲存變更':'新增消費'}</button></div>`;
 }
 
 function buildCreditDetail(tripCards, defCardId, subRateHtml) {
