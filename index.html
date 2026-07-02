@@ -1831,12 +1831,17 @@ function renderQuickPanel(trip) {
   qPayment=null; qSelectedCardId=null; qSelectedSubRateId=null; qCatId=null; qPhotos=[]; qTripId=trip.id;
 
   const tripCards=DB.cards.filter(c=>(trip.tripCards||[]).includes(c.id));
+  // 這排只列出「有明確限額」的卡片：逐方案判斷，只看剩餘額度是實際數字（非無上限）的方案，
+  // 每張卡取這些有限額方案中剩餘最少的那個顯示；完全沒有任何限額方案的卡不列出。
   const rebateRows=tripCards.map(card=>{
     const subs=card.subRates||[];
     if(!subs.length) return null;
-    const best=subs.map(s=>({s,info:getCardRebate(card,s.id,[],null)})).sort((a,b)=>b.s.rate-a.s.rate)[0];
-    if(!best) return null;
-    return {card,sub:best.s,remaining:best.info.remaining};
+    const cappedSubs=subs
+      .map(s=>({s,info:getCardRebate(card,s.id,[],null)}))
+      .filter(x=>x.info && isFinite(x.info.remaining));
+    if(!cappedSubs.length) return null; // 全部方案都無上限 → 整張卡不列
+    const tightest=cappedSubs.sort((a,b)=>a.info.remaining-b.info.remaining)[0];
+    return {card,sub:tightest.s,remaining:tightest.info.remaining,multiCapped:cappedSubs.length<subs.length};
   }).filter(Boolean);
 
   el.innerHTML=`
@@ -1860,7 +1865,7 @@ function renderQuickPanel(trip) {
     <div style="margin-bottom:14px;display:flex;flex-direction:column;gap:4px">
       ${rebateRows.map(r=>`
         <button class="rebate-row" id="rebate-${r.card.id}" onclick="toggleRebateCard('${r.card.id}')">
-          <span style="font-size:12px;color:var(--sub);font-weight:600">${r.card.name} · ${r.sub.rate}%${r.card.subRates.length>1?' 起':''}</span>
+          <span style="font-size:12px;color:var(--sub);font-weight:600">${r.card.name}${r.card.subRates.length>1?` · ${r.sub.name}`:''} · ${r.sub.rate}%</span>
           <span style="display:flex;align-items:center;gap:8px">
             <span style="font-size:11px;color:var(--faint)" id="rebate-status-${r.card.id}">剩 NT$${fmtNum(r.remaining)}</span>
             <span style="font-size:12px;font-weight:700" id="rebate-est-${r.card.id}"></span>
@@ -2011,6 +2016,14 @@ function setQCurrency(code) {
 }
 window.setQCurrency=setQCurrency;
 
+// 取一張卡「有明確限額的方案中剩餘最少」的那個；若全部無上限回傳 null
+function tightestCappedSub(card) {
+  const subs=card.subRates||[];
+  const capped=subs.map(s=>({s,info:getCardRebate(card,s.id,[],null)})).filter(x=>x.info&&isFinite(x.info.remaining));
+  if(!capped.length) return null;
+  return capped.sort((a,b)=>a.info.remaining-b.info.remaining)[0];
+}
+
 function updateQTwd(tripId) {
   const trip=DB.trips.find(t=>t.id===tripId);
   const rate=getRate(trip);
@@ -2018,34 +2031,36 @@ function updateQTwd(tripId) {
   const twd=qCurrency==='TWD'?amt:amt*(rate||1);
   const el=document.getElementById('q-twd');
   if(el) el.textContent=amt&&qCurrency!=='TWD'&&rate?`≈ NT$ ${fmtNum(twd)}`:'';
-  // 即時顯示每張信用卡狀態
+  // 即時顯示每張信用卡狀態（只有有限額、有列出預覽列的卡才更新）
   const tripCards=DB.cards.filter(c=>(trip.tripCards||[]).includes(c.id));
   tripCards.forEach(card=>{
     const estEl=document.getElementById(`rebate-est-${card.id}`);
     const statusEl=document.getElementById(`rebate-status-${card.id}`);
     const subs=card.subRates||[];
     if(!subs.length) return;
+    // 若使用者已選定此卡＋方案，用選定的；否則用「有限額中剩餘最少」的方案（與預覽列一致）
     const useSelected=qSelectedCardId===card.id&&qSelectedSubRateId&&subs.some(s=>s.id===qSelectedSubRateId);
-    const chosenSub=useSelected?subs.find(s=>s.id===qSelectedSubRateId):subs.map(s=>({s,info:getCardRebate(card,s.id,[],null)})).sort((a,b)=>b.s.rate-a.s.rate)[0]?.s;
-    if(!chosenSub) return;
-    const info=getCardRebate(card,chosenSub.id,[],null);
-    const remaining=info.remaining;
-    if(amt>0&&twd>0){
-      const isOver=twd>remaining;
-      const est=isOver?remaining:Math.min(twd*(chosenSub.rate/100),remaining);
-      if(estEl){
-        estEl.textContent=isOver?`⚠️ 超過NT$${fmtNum(twd-remaining)}`:`+NT$${fmtNum(est)}`;
-        estEl.style.color=isOver?'var(--red)':'var(--green)';
+    const chosenSub=useSelected?subs.find(s=>s.id===qSelectedSubRateId):tightestCappedSub(card)?.s;
+    if(chosenSub&&(estEl||statusEl)){
+      const info=getCardRebate(card,chosenSub.id,[],null);
+      const remaining=info.remaining;
+      if(amt>0&&twd>0){
+        const isOver=twd>remaining;
+        const est=isOver?remaining:Math.min(twd*(chosenSub.rate/100),remaining);
+        if(estEl){
+          estEl.textContent=isOver?`⚠️ 超過NT$${fmtNum(twd-remaining)}`:`+NT$${fmtNum(est)}`;
+          estEl.style.color=isOver?'var(--red)':'var(--green)';
+        }
+        if(statusEl){
+          statusEl.textContent=isOver
+            ?`剩餘額度 NT$${fmtNum(remaining)}｜這筆超出 NT$${fmtNum(twd-remaining)}`
+            :`刷後剩餘 NT$${fmtNum(remaining-twd)}`;
+          statusEl.style.color=isOver?'var(--red)':'var(--faint)';
+        }
+      } else {
+        if(estEl){ estEl.textContent=''; estEl.style.color=''; }
+        if(statusEl){ statusEl.textContent=`剩餘額度 NT$${fmtNum(remaining)}`; statusEl.style.color=''; }
       }
-      if(statusEl){
-        statusEl.textContent=isOver
-          ?`剩餘額度 NT$${fmtNum(remaining)}｜這筆超出 NT$${fmtNum(twd-remaining)}`
-          :`刷後剩餘 NT$${fmtNum(remaining-twd)}`;
-        statusEl.style.color=isOver?'var(--red)':'var(--faint)';
-      }
-    } else {
-      if(estEl){ estEl.textContent=''; estEl.style.color=''; }
-      if(statusEl){ statusEl.textContent=`剩餘額度 NT$${fmtNum(remaining)}`; statusEl.style.color=''; }
     }
     // 同步更新展開中的方案清單各自的剩餘額度顯示
     if(qSelectedCardId===card.id&&subs.length>1){
