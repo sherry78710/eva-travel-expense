@@ -540,8 +540,9 @@ function getCardRebate(card, subId, tripExps, excludeId) {
     .filter(e=>e.payment==='credit'&&e.cardId===card.id&&e.subRateId===subId&&e.id!==excludeId)
     .reduce((s,e)=>s+(e.twdAmount||0)*(sub.rate/100),0);
   const totalUsed = (sub.used||0)+usedInTrip;
-  const remaining = Math.max(0,(sub.limit||0)-totalUsed);
-  return {rate:sub.rate,limit:sub.limit||0,totalUsed,remaining};
+  const unlimited = !!sub.unlimited;
+  const remaining = unlimited ? Infinity : Math.max(0,(sub.limit||0)-totalUsed);
+  return {rate:sub.rate,limit:unlimited?Infinity:(sub.limit||0),totalUsed,remaining,unlimited};
 }
 
 function getFundInfo(fund, tripExps, excludeId) {
