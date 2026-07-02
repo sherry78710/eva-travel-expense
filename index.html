@@ -967,7 +967,7 @@ function renderTripList() {
 
   const buildCard=(t, phaseLabel, phaseColorClass)=>{
     const cur=getCur(t.currency);
-    const isOpen=_homeCardOpen[t.id]!==false; // 預設展開
+    const isOpen=_homeCardOpen[t.id]===true; // 預設收合
     const dateLine=t.startDate===t.endDate?t.startDate:`${t.startDate} – ${t.endDate}`;
     const upcomingNote=phaseLabel==='即將出發'?` · 還有 ${daysUntil(t.startDate)} 天`:'';
     const isCurrent=getCurrentTrip()?.id===t.id;
