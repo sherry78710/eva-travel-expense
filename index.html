@@ -369,6 +369,7 @@ const ICONS = {
   nail:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6"/><path d="M10 2v4.3a3 3 0 0 1-.5 1.6L7 12a4 4 0 0 0-1 2.6V18a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-3.4A4 4 0 0 0 17 12l-2.5-4.1a3 3 0 0 1-.5-1.6V2"/></svg>`,
   search:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>`,
   camera:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>`,
+  star:`<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
 };
 function ico(name, size=18, color='currentColor') {
   const svg = ICONS[name] || ICONS.box;
@@ -765,9 +766,7 @@ document.getElementById('app').addEventListener('touchend',e=>{
   }
   // 首頁子頁面右滑回列表
   if(currentTab==='home'&&navStack.home!=='list'&&dx>70&&Math.abs(dx)>Math.abs(dy)*2) {
-    if(navStack.home==='detail') navStack.home='list';
-    else if(navStack.home==='create'||navStack.home==='edit') { calStart=null;calEnd=null;calViewYear=null;calViewMonth=null;_tripCards=[];_tripExtraCards=[]; navStack.home=navStack.home==='edit'?'detail':'list'; }
-    render(); txStart=null; tyStart=null; return;
+    backFromCreateTrip(); txStart=null; tyStart=null; return;
   }
   // 記帳頁的編輯/補充細節表單右滑返回
   if(currentTab==='add'&&addSubView!=='quick'&&dx>70&&Math.abs(dx)>Math.abs(dy)*2) {
@@ -788,8 +787,7 @@ document.getElementById('app').addEventListener('touchend',e=>{
 // ============================================================
 function renderHome() {
   const v=navStack.home;
-  if(v==='create'||v==='edit') renderCreateTrip();
-  else if(v==='detail') renderTripDetail();
+  if(v==='create') renderCreateTrip();
   else renderTripList();
 }
 
@@ -811,6 +809,90 @@ function daysUntil(dateStr) {
   return Math.round((d2-d1)/86400000);
 }
 
+// 直接更新旅程的單一欄位並存檔（首頁卡片的名稱等欄位用）
+function updateTripField(tripId, field, value) {
+  DB.trips=DB.trips.map(t=>t.id===tripId?{...t,[field]:value}:t);
+  save('trips');
+}
+window.updateTripField=updateTripField;
+
+function saveTripBudget(tripId) {
+  const personalBudget=document.getElementById(`tf-personalbudget-${tripId}`)?.value;
+  const dailyBudget=document.getElementById(`tf-dailybudget-${tripId}`)?.value;
+  DB.trips=DB.trips.map(t=>t.id===tripId?{...t,personalBudget:personalBudget?parseFloat(personalBudget):null,dailyBudget:dailyBudget?parseFloat(dailyBudget):null}:t);
+  save('trips');
+  showToast('預算已儲存');
+  const badge=document.getElementById(`budget_${tripId}-badge`);
+  if(badge) badge.textContent=personalBudget?'已設定':'未設定';
+}
+window.saveTripBudget=saveTripBudget;
+
+// 通用手風琴外框（key 要帶 tripId 確保多張卡片同時展開時 id 不衝突）
+function buildHomeAccordion(tripId, key, iconName, title, badge, bodyHtml) {
+  const accId=`${key}_${tripId}`;
+  const isOpen=!!_accOpenState[accId];
+  return `
+    <div style="background:var(--bg);border:1px solid var(--line-light);border-radius:12px;margin-bottom:8px;overflow:hidden">
+      <button onclick="event.stopPropagation();toggleCreateAcc('${accId}')" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border:none;background:transparent;cursor:pointer;font-family:inherit">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:24px;height:24px;border-radius:7px;background:var(--accent-light);display:flex;align-items:center;justify-content:center;color:var(--accent)">${ico(iconName,12)}</div>
+          <span style="font-size:12.5px;font-weight:700;color:var(--text)">${title}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="${accId}-badge" style="font-size:10px;color:var(--faint);background:var(--card);padding:2px 7px;border-radius:999px">${badge}</span>
+          <span id="${accId}-acc-chev" style="color:var(--faint);transition:transform .2s;display:flex;${isOpen?'transform:rotate(180deg)':''}">${ico('chevdown',14)}</span>
+        </div>
+      </button>
+      <div id="${accId}-acc-body" style="display:${isOpen?'block':'none'};padding:10px 13px 13px;border-top:1px solid var(--line-light);font-size:12px;color:var(--sub)" onclick="event.stopPropagation()">
+        ${bodyHtml}
+      </div>
+    </div>`;
+}
+
+function buildCardsAccordionBody(trip) {
+  if(!DB.cards.length) return `<div style="font-size:13px;color:var(--faint)">尚未設定信用卡</div><button class="btn-outline" onclick="navStack.settings='add-card';settingsEditCardId=null;switchTab('settings')" style="margin-top:10px;padding:9px;font-size:12px">+ 前往設定信用卡</button>`;
+  return `
+    <div class="pill-row" id="trip-cards-pills-${trip.id}">
+      ${DB.cards.map(card=>`<button class="pill sm ${(trip.tripCards||[]).includes(card.id)?'active':''}" data-card-id="${card.id}" onclick="toggleTripCard('${trip.id}','${card.id}')">${card.name}</button>`).join('')}
+    </div>
+    <div style="font-size:11px;color:var(--faint);margin-top:10px">會出現在「記一筆」的快速選卡列</div>
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line-light)">
+      <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">其他可選信用卡</div>
+      <div style="font-size:11px;color:var(--faint);margin-bottom:10px">例如訂機票用的卡：編輯消費時可以選，但不會出現在快速記帳</div>
+      <div class="pill-row" id="trip-extra-cards-pills-${trip.id}">
+        ${DB.cards.map(card=>`<button class="pill sm ${(trip.extraCards||[]).includes(card.id)?'active':''}" data-card-id="${card.id}" onclick="toggleTripExtraCard('${trip.id}','${card.id}')">${card.name}</button>`).join('')}
+      </div>
+    </div>`;
+}
+
+function buildFundsAccordionBody(trip) {
+  const funds=(DB.funds||[]).filter(f=>f.tripId===trip.id);
+  const cur=getCur(trip.currency);
+  const tripExps=DB.expenses.filter(e=>e.tripId===trip.id);
+  return `
+    ${funds.length?funds.map(f=>{
+      const info=getFundInfo(f,tripExps,null);
+      return `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-light)">
+        <span>${f.name}</span>
+        <span style="font-weight:600;color:${info.remaining<0?'var(--red)':'var(--text)'}">${cur.code} ${fmtNum(info.remaining)}</span>
+      </div>`;
+    }).join(''):'<div style="font-size:13px;color:var(--faint)">尚未建立公基金</div>'}
+    <button class="btn-outline" onclick="_fundFormTripHint='${trip.id}';navStack.settings='add-fund';settingsEditFundId=null;switchTab('settings')" style="margin-top:10px;padding:9px;font-size:12px">+ 新增公基金</button>`;
+}
+
+function buildBudgetAccordionBody(trip) {
+  return `
+    <div style="margin-bottom:10px">
+      <div style="font-size:10px;color:var(--faint);margin-bottom:4px">個人總預算（TWD）</div>
+      <input class="field-input" type="number" inputmode="decimal" id="tf-personalbudget-${trip.id}" value="${trip.personalBudget||''}" placeholder="例：70000" style="font-size:13px">
+    </div>
+    <div style="margin-bottom:10px">
+      <div style="font-size:10px;color:var(--faint);margin-bottom:4px">每日預算（留空自動計算）</div>
+      <input class="field-input" type="number" inputmode="decimal" id="tf-dailybudget-${trip.id}" value="${trip.dailyBudget||''}" placeholder="自動計算" style="font-size:13px">
+    </div>
+    <button class="btn-outline" onclick="saveTripBudget('${trip.id}')" style="padding:8px;font-size:12px">儲存</button>`;
+}
+
 function renderTripList() {
   const el=document.getElementById('page-home');
   const activeTrips=DB.trips.filter(t=>getTripPhase(t)==='active').sort((a,b)=>new Date(a.startDate)-new Date(b.startDate));
@@ -830,10 +912,10 @@ function renderTripList() {
 
   const buildCard=(t, phaseLabel, phaseColorClass)=>{
     const cur=getCur(t.currency);
-    const {totalTwd}=tripSummary(t.id);
     const isOpen=_homeCardOpen[t.id]!==false; // 預設展開
     const dateLine=t.startDate===t.endDate?t.startDate:`${t.startDate} – ${t.endDate}`;
     const upcomingNote=phaseLabel==='即將出發'?` · 還有 ${daysUntil(t.startDate)} 天`:'';
+    const isCurrent=getCurrentTrip()?.id===t.id;
     return `
       <div style="background:var(--card);border:1px solid var(--line-light);border-radius:16px;margin-bottom:10px;overflow:hidden">
         <div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleHomeCard('${t.id}')">
@@ -841,17 +923,42 @@ function renderTripList() {
             <div style="font-size:11px;color:var(--faint);margin-bottom:2px">${dateLine}${upcomingNote}</div>
             <div style="font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.name}</div>
           </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:8px">
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;margin-left:8px">
             <span style="font-size:10px;padding:3px 8px;border-radius:999px;font-weight:700" class="${phaseColorClass}">${phaseLabel}</span>
+            <button onclick="event.stopPropagation();setCurrentTrip('${t.id}');renderTripList()" title="設為目前旅程" style="background:none;border:none;padding:0;cursor:pointer;color:${isCurrent?'#B98A4A':'var(--line)'};display:flex">${ico('star',16)}</button>
+            <button onclick="event.stopPropagation();deleteTripConfirm('${t.id}')" style="background:none;border:none;padding:0;cursor:pointer;color:var(--faint);display:flex">${ico('trash',15)}</button>
             <span style="color:var(--faint);display:flex;transition:transform .2s;${isOpen?'transform:rotate(180deg)':''}">${ico('chevdown',16)}</span>
           </div>
         </div>
         ${isOpen?`
-        <div style="padding:0 16px 14px;border-top:1px solid var(--line-light);padding-top:12px">
-          <div style="font-size:11px;color:var(--faint)">${phaseLabel==='即將出發'?'目前已記錄':'合計（換算台幣）'}</div>
-          <div style="font-size:22px;font-weight:700;color:var(--text);margin:4px 0">NT$ ${fmtNum(totalTwd)}</div>
-          <button onclick="event.stopPropagation();openTrip('${t.id}')" style="background:none;border:none;padding:0;cursor:pointer;font-size:12px;color:var(--sub);font-family:inherit;margin-right:14px">旅程總覽 ›</button>
-          <button onclick="event.stopPropagation();selectedTripId='${t.id}';switchTab('exp')" style="background:none;border:none;padding:0;cursor:pointer;font-size:12px;color:var(--accent);font-weight:700;font-family:inherit">查看消費紀錄 ›</button>
+        <div style="padding:0 16px 14px;border-top:1px solid var(--line-light);padding-top:12px" onclick="event.stopPropagation()">
+          <!-- 旅程名稱 -->
+          <div style="margin-bottom:12px">
+            <div style="font-size:10px;color:var(--faint);margin-bottom:4px">旅程名稱</div>
+            <input class="field-input" value="${t.name}" onblur="updateTripField('${t.id}','name',this.value)" style="font-size:14px;font-weight:600;padding:6px 0">
+          </div>
+          <!-- 旅程日期 -->
+          <div style="margin-bottom:12px;cursor:pointer" onclick="openTripDateCal('${t.id}')">
+            <div style="font-size:10px;color:var(--faint);margin-bottom:4px">旅程日期</div>
+            <div style="font-size:13.5px;font-weight:600;padding:7px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
+              <span>${t.startDate} → ${t.endDate}</span><span style="color:var(--faint)">›</span>
+            </div>
+          </div>
+          <!-- 旅遊幣別 -->
+          <div style="margin-bottom:16px">
+            <div style="font-size:10px;color:var(--faint);margin-bottom:4px">旅遊幣別</div>
+            <div style="font-size:13.5px;font-weight:600;padding:7px 0">${cur.flag} ${t.currency} ${cur.name}<span style="font-size:10.5px;color:var(--faint);font-weight:400;margin-left:6px">（建立後不可變更）</span></div>
+          </div>
+
+          ${buildHomeAccordion(t.id,'rate','refresh','旅程匯率', getRate(t)?`1≈${fmtRate(getRate(t))}`:'未設定', buildRateAccordionBody(t))}
+          ${buildHomeAccordion(t.id,'cards','creditcard','攜帶的信用卡', (t.tripCards||[]).length?(t.tripCards||[]).length+'張':'未選', buildCardsAccordionBody(t))}
+          ${buildHomeAccordion(t.id,'funds','wallet','公基金', (DB.funds||[]).filter(f=>f.tripId===t.id).length?(DB.funds||[]).filter(f=>f.tripId===t.id).length+'個':'未設定', buildFundsAccordionBody(t))}
+          ${buildHomeAccordion(t.id,'budget','edit','預算', t.personalBudget?'已設定':'未設定', buildBudgetAccordionBody(t))}
+          ${buildHomeAccordion(t.id,'cats','box','分類管理', DB.categories.length+'個', `<div id="drag-cat-list">${buildDragCatList()}</div><div id="add-cat-section" style="margin-top:8px"><button class="btn-primary" style="background:var(--accent-light);color:var(--accent);border:1.5px solid var(--accent);padding:9px;font-size:12px" onclick="showAddCat()">+ 新增分類</button></div>`)}
+
+          <button onclick="selectedTripId='${t.id}';switchTab('exp')" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:4px;font-size:12.5px;font-weight:700;color:var(--text);cursor:pointer;font-family:inherit">
+            查看消費紀錄 <span style="color:var(--faint)">›</span>
+          </button>
         </div>`:''}
       </div>`;
   };
@@ -885,49 +992,58 @@ function renderTripList() {
     <button class="btn-outline" style="margin-top:20px" onclick="goCreateTrip()">+ 建立新旅程</button>`;
 }
 
-function goCreateTrip() { navStack.home='create'; editingTripId=null; render(); }
-function openTrip(id) { selectedTripId=id; navStack.home='detail'; expSearchQ=''; expFilterCatId=null; render(); }
+function goCreateTrip() { navStack.home='create'; render(); }
+function openTrip(id) { selectedTripId=id; expSearchQ=''; expFilterCatId=null; switchTab('exp'); }
 window.goCreateTrip=goCreateTrip; window.openTrip=openTrip;
 
 // ============================================================
 // 建立/編輯旅程
 // ============================================================
 let calStart=null, calEnd=null, calSelecting='start';
+let _calEditingTripId=null; // null=建立旅程流程；有值=正在編輯首頁卡片上某趟旅程的日期
+
+// 首頁卡片上點日期列時呼叫：tripId 傳 null 代表是「建立旅程」流程
+function openTripDateCal(tripId) {
+  _calEditingTripId=tripId;
+  if(tripId) {
+    const trip=DB.trips.find(t=>t.id===tripId);
+    calStart=trip?.startDate||todayISO();
+    calEnd=trip?.endDate||todayISO();
+  }
+  calViewYear=parseInt(calStart.slice(0,4));
+  calViewMonth=parseInt(calStart.slice(5,7))-1;
+  toggleCal();
+}
+window.openTripDateCal=openTripDateCal;
 let calViewYear, calViewMonth;
 
 function renderCreateTrip() {
-  const trip=editingTripId?DB.trips.find(t=>t.id===editingTripId):null;
-  const isEdit=!!trip;
   const el=document.getElementById('page-home');
+  el.ontouchstart=null; el.ontouchend=null;
 
-  if(!calStart) { calStart=trip?.startDate||todayISO(); calEnd=trip?.endDate||todayISO(); }
+  if(!calStart) { calStart=todayISO(); calEnd=todayISO(); }
   if(!calViewYear) { calViewYear=parseInt(calStart.slice(0,4)); calViewMonth=parseInt(calStart.slice(5,7))-1; }
+  _calEditingTripId=null; // 建立流程的日曆不綁定特定旅程
 
   const days=daysBetween(calStart,calEnd);
-  const tripCards=_tripCards.length?_tripCards:(trip?.tripCards||[]);
-  const tripExtraCards=_tripExtraCards.length?_tripExtraCards:(trip?.extraCards||[]);
-  const cur=trip?getCur(trip.currency):null;
 
   el.innerHTML=`
     <div class="page-header">
       <div style="display:flex;align-items:center;gap:4px">
         <button class="back-btn" onclick="backFromCreateTrip()">${ico('back',22)}</button>
-        <div><div class="page-subtitle">${isEdit?'EDIT TRIP':'NEW TRIP'}</div><div class="page-title">${isEdit?'編輯旅程':'建立新旅程'}</div></div>
+        <div><div class="page-subtitle">NEW TRIP</div><div class="page-title">建立新旅程</div></div>
       </div>
-      ${isEdit?`<button style="background:none;border:none;cursor:pointer;color:var(--red)" onclick="deleteTripConfirm('${trip.id}')">${ico('trash',18)}</button>`:''}
     </div>
 
-    <!-- 必填卡片 -->
     <div style="background:var(--card);border-radius:20px;border:1px solid var(--line);overflow:hidden;margin-bottom:12px">
-
       <!-- 旅程名稱 -->
       <div style="padding:14px 16px;border-bottom:1px solid var(--line-light)">
         <div style="font-size:10px;color:var(--faint);letter-spacing:.12em;text-transform:uppercase;font-weight:600;margin-bottom:6px">旅程名稱</div>
-        <input class="field-input" id="tf-name" value="${trip?.name||''}" placeholder="例：2026 東京之旅" style="border:none;padding:0;font-size:17px;font-weight:700">
+        <input class="field-input" id="tf-name" placeholder="例：2026 東京之旅" style="border:none;padding:0;font-size:17px;font-weight:700">
       </div>
 
       <!-- 日期 -->
-      <div id="cal-trigger" style="padding:14px 16px;border-bottom:1px solid var(--line-light);cursor:pointer;display:flex;align-items:center;justify-content:space-between" onclick="toggleCal()">
+      <div id="cal-trigger" style="padding:14px 16px;border-bottom:1px solid var(--line-light);cursor:pointer;display:flex;align-items:center;justify-content:space-between" onclick="openTripDateCal(null)">
         <div style="flex:1">
           <div style="font-size:10px;color:var(--faint);letter-spacing:.12em;text-transform:uppercase;font-weight:600;margin-bottom:8px">旅程日期</div>
           <div style="display:flex;align-items:center;gap:12px">
@@ -951,128 +1067,17 @@ function renderCreateTrip() {
       <div style="padding:14px 16px;display:flex;align-items:center;justify-content:space-between">
         <div style="flex:1">
           <div style="font-size:10px;color:var(--faint);letter-spacing:.12em;text-transform:uppercase;font-weight:600;margin-bottom:6px">旅遊幣別</div>
-          ${isEdit?
-            `<div style="font-size:15px;font-weight:700;color:var(--text)">${cur.flag} ${trip.currency} ${cur.name}</div>
-             <div style="font-size:11px;color:var(--faint);margin-top:3px">幣別建立後不可變更</div>`:
-            `<select id="tf-currency" style="width:100%;border:none;background:transparent;font-size:15px;font-weight:700;color:var(--text);outline:none;font-family:inherit;cursor:pointer;appearance:none;-webkit-appearance:none">
-              ${CURRENCIES.filter(c=>c.code!=='TWD').map(c=>`<option value="${c.code}">${c.flag} ${c.code} ${c.name}</option>`).join('')}
-            </select>`
-          }
+          <select id="tf-currency" style="width:100%;border:none;background:transparent;font-size:15px;font-weight:700;color:var(--text);outline:none;font-family:inherit;cursor:pointer;appearance:none;-webkit-appearance:none">
+            ${CURRENCIES.filter(c=>c.code!=='TWD').map(c=>`<option value="${c.code}">${c.flag} ${c.code} ${c.name}</option>`).join('')}
+          </select>
         </div>
-        ${isEdit?'':`<span style="color:var(--faint)">${ico('chevdown',16)}</span>`}
+        <span style="color:var(--faint)">${ico('chevdown',16)}</span>
       </div>
     </div>
 
-    <!-- 選填區塊標題 -->
-    <div style="font-size:11px;color:var(--faint);font-weight:600;letter-spacing:.12em;text-transform:uppercase;margin:20px 0 10px">選填設定</div>
+    <div style="font-size:11px;color:var(--faint);line-height:1.6;margin-bottom:20px">建立後可以在首頁卡片裡設定匯率、信用卡、公基金、預算等細節。</div>
 
-    <!-- 旅程匯率手風琴 -->
-    ${isEdit?`
-    <div style="background:var(--card);border-radius:16px;border:1px solid var(--line);overflow:hidden;margin-bottom:8px">
-      <button onclick="toggleCreateAcc('rate')" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border:none;background:transparent;cursor:pointer;font-family:inherit">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:28px;height:28px;border-radius:8px;background:var(--accent-light);display:flex;align-items:center;justify-content:center;color:var(--accent)">${ico('refresh',14)}</div>
-          <span style="font-size:14px;font-weight:700;color:var(--text)">旅程匯率</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span id="rate-acc-badge" style="font-size:11px;color:var(--faint);background:var(--line-light);padding:2px 8px;border-radius:999px">${getRate(trip)?`1≈${fmtRate(getRate(trip))}`:'未設定'}</span>
-          <span id="rate-acc-chev" style="color:var(--faint);transition:transform .2s;display:flex;${_accOpenState.rate?'transform:rotate(180deg)':''}">${ico('chevdown',16)}</span>
-        </div>
-      </button>
-      <div id="rate-acc-body" style="display:${_accOpenState.rate?'block':'none'};padding:0 16px 16px;border-top:1px solid var(--line-light)">
-        ${buildRateAccordionBody(trip)}
-      </div>
-    </div>`:''}
-
-    <!-- 信用卡手風琴 -->
-    <div style="background:var(--card);border-radius:16px;border:1px solid var(--line);overflow:hidden;margin-bottom:8px">
-      <button onclick="toggleCreateAcc('cards')" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border:none;background:transparent;cursor:pointer;font-family:inherit">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:28px;height:28px;border-radius:8px;background:var(--accent-light);display:flex;align-items:center;justify-content:center;color:var(--accent)">${ico('creditcard',14)}</div>
-          <span style="font-size:14px;font-weight:700;color:var(--text)">攜帶的信用卡</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span id="cards-acc-badge" style="font-size:11px;color:var(--faint);background:var(--line-light);padding:2px 8px;border-radius:999px">${tripCards.length?tripCards.length+'張':'未選'}</span>
-          <span id="cards-acc-chev" style="color:var(--faint);transition:transform .2s;display:flex">${ico('chevdown',16)}</span>
-        </div>
-      </button>
-      <div id="cards-acc-body" style="display:none;padding:0 16px 16px;border-top:1px solid var(--line-light)">
-        ${DB.cards.length>0?`
-        <div class="pill-row" id="trip-cards-pills" style="margin-top:14px">
-          ${DB.cards.map(card=>`
-            <button class="pill sm ${tripCards.includes(card.id)?'active':''}" onclick="toggleTripCard('${card.id}')">${card.name}</button>
-          `).join('')}
-        </div>
-        <div style="font-size:11px;color:var(--faint);margin-top:10px">會出現在「記一筆」的快速選卡列</div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line-light)">
-          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">其他可選信用卡</div>
-          <div style="font-size:11px;color:var(--faint);margin-bottom:10px">例如訂機票用的卡：編輯消費時可以選，但不會出現在快速記帳</div>
-          <div class="pill-row" id="trip-extra-cards-pills">
-            ${DB.cards.map(card=>`
-              <button class="pill sm ${tripExtraCards.includes(card.id)?'active':''}" onclick="toggleTripExtraCard('${card.id}')">${card.name}</button>
-            `).join('')}
-          </div>
-        </div>`:`
-        <div style="margin-top:14px;font-size:13px;color:var(--faint)">尚未設定信用卡</div>
-        <button class="btn-outline" onclick="navStack.settings='card-form';settingsEditCardId=null;switchTab('settings')" style="margin-top:10px;padding:10px">+ 前往設定信用卡</button>`}
-      </div>
-    </div>
-
-    <!-- 現金手風琴 -->
-    <div style="background:var(--card);border-radius:16px;border:1px solid var(--line);overflow:hidden;margin-bottom:8px">
-      <button onclick="toggleCreateAcc('cash')" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border:none;background:transparent;cursor:pointer;font-family:inherit">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:28px;height:28px;border-radius:8px;background:var(--accent-light);display:flex;align-items:center;justify-content:center;color:var(--accent)">${ico('banknote',14)}</div>
-          <span style="font-size:14px;font-weight:700;color:var(--text)">攜帶外幣現金</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span id="cash-acc-badge" style="font-size:11px;color:var(--faint);background:var(--line-light);padding:2px 8px;border-radius:999px">${trip?.cashAmount?fmtNum(trip.cashAmount):'未設定'}</span>
-          <span id="cash-acc-chev" style="color:var(--faint);transition:transform .2s;display:flex">${ico('chevdown',16)}</span>
-        </div>
-      </button>
-      <div id="cash-acc-body" style="display:none;padding:0 16px 16px;border-top:1px solid var(--line-light)">
-        <div style="margin-top:14px">
-          <div style="font-size:10px;color:var(--faint);font-weight:600;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">金額（${isEdit?trip.currency:'旅遊幣別'}）</div>
-          <input class="field-input" type="number" inputmode="decimal" id="tf-cash" value="${trip?.cashAmount||''}" placeholder="例：30000"
-            oninput="const b=document.getElementById('cash-acc-badge');b.textContent=this.value?fmtNum(parseFloat(this.value)):'未設定'">
-        </div>
-        <div style="font-size:11px;color:var(--faint);margin-top:8px">用於追蹤現金剩餘</div>
-      </div>
-    </div>
-
-    <!-- 預算手風琴 -->
-    <div style="background:var(--card);border-radius:16px;border:1px solid var(--line);overflow:hidden;margin-bottom:8px">
-      <button onclick="toggleCreateAcc('budget')" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border:none;background:transparent;cursor:pointer;font-family:inherit">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:28px;height:28px;border-radius:8px;background:var(--accent-light);display:flex;align-items:center;justify-content:center;color:var(--accent)">${ico('edit',14)}</div>
-          <span style="font-size:14px;font-weight:700;color:var(--text)">旅程預算</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span id="budget-acc-badge" style="font-size:11px;color:var(--faint);background:var(--line-light);padding:2px 8px;border-radius:999px">${trip?.tripBudget||trip?.personalBudget?'已設定':'未設定'}</span>
-          <span id="budget-acc-chev" style="color:var(--faint);transition:transform .2s;display:flex">${ico('chevdown',16)}</span>
-        </div>
-      </button>
-      <div id="budget-acc-body" style="display:none;padding:0 16px 16px;border-top:1px solid var(--line-light)">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px">
-          <div style="grid-column:1/-1">
-            <div style="font-size:10px;color:var(--faint);font-weight:600;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">旅程總預算（TWD）</div>
-            <input class="field-input" type="number" inputmode="decimal" id="tf-tripbudget" value="${trip?.tripBudget||''}" placeholder="例：100000">
-          </div>
-          <div>
-            <div style="font-size:10px;color:var(--faint);font-weight:600;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">個人總預算</div>
-            <input class="field-input" type="number" inputmode="decimal" id="tf-personalbudget" value="${trip?.personalBudget||''}" placeholder="例：70000">
-          </div>
-          <div>
-            <div style="font-size:10px;color:var(--faint);font-weight:600;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">每日預算</div>
-            <input class="field-input" type="number" inputmode="decimal" id="tf-dailybudget" value="${trip?.dailyBudget||''}" placeholder="自動計算">
-          </div>
-        </div>
-        <div style="font-size:11px;color:var(--faint);margin-top:10px">每日預算未填時自動取「個人總預算 ÷ 天數」</div>
-      </div>
-    </div>
-
-    <button class="btn-primary" id="tf-submit-btn" onclick="submitTrip('${trip?.id||''}')" style="margin-top:20px">${isEdit?'儲存變更':'建立旅程'}</button>`;
+    <button class="btn-primary" onclick="submitTrip()">建立旅程</button>`;
 }
 
 function toggleCreateAcc(id) {
@@ -1087,31 +1092,40 @@ function toggleCreateAcc(id) {
 window.toggleCreateAcc=toggleCreateAcc;
 let _accOpenState={};
 
-let _tripCards=[];
-let _tripExtraCards=[];
-function toggleTripCard(id) {
-  const idx=_tripCards.indexOf(id);
-  if(idx>=0) _tripCards.splice(idx,1); else _tripCards.push(id);
-  document.querySelectorAll('#trip-cards-pills .pill').forEach(btn=>{
-    const cid=btn.getAttribute('onclick').match(/'([^']+)'/)[1];
-    btn.classList.toggle('active',_tripCards.includes(cid));
+// 攜帶的信用卡 / 其他可選信用卡：直接對指定旅程即時存檔（首頁卡片用）
+function toggleTripCard(tripId, cardId) {
+  const trip=DB.trips.find(t=>t.id===tripId);
+  if(!trip) return;
+  const arr=[...(trip.tripCards||[])];
+  const idx=arr.indexOf(cardId);
+  if(idx>=0) arr.splice(idx,1); else arr.push(cardId);
+  DB.trips=DB.trips.map(t=>t.id===tripId?{...t,tripCards:arr}:t);
+  save('trips');
+  const badge=document.getElementById(`cards-acc-badge-${tripId}`);
+  if(badge) badge.textContent=arr.length?arr.length+'張':'未選';
+  document.querySelectorAll(`#trip-cards-pills-${tripId} .pill`).forEach(btn=>{
+    btn.classList.toggle('active',arr.includes(btn.dataset.cardId));
   });
 }
 window.toggleTripCard=toggleTripCard;
 
-function toggleTripExtraCard(id) {
-  const idx=_tripExtraCards.indexOf(id);
-  if(idx>=0) _tripExtraCards.splice(idx,1); else _tripExtraCards.push(id);
-  document.querySelectorAll('#trip-extra-cards-pills .pill').forEach(btn=>{
-    const cid=btn.getAttribute('onclick').match(/'([^']+)'/)[1];
-    btn.classList.toggle('active',_tripExtraCards.includes(cid));
+function toggleTripExtraCard(tripId, cardId) {
+  const trip=DB.trips.find(t=>t.id===tripId);
+  if(!trip) return;
+  const arr=[...(trip.extraCards||[])];
+  const idx=arr.indexOf(cardId);
+  if(idx>=0) arr.splice(idx,1); else arr.push(cardId);
+  DB.trips=DB.trips.map(t=>t.id===tripId?{...t,extraCards:arr}:t);
+  save('trips');
+  document.querySelectorAll(`#trip-extra-cards-pills-${tripId} .pill`).forEach(btn=>{
+    btn.classList.toggle('active',arr.includes(btn.dataset.cardId));
   });
 }
 window.toggleTripExtraCard=toggleTripExtraCard;
 
 function backFromCreateTrip() {
-  calStart=null; calEnd=null; calViewYear=null; calViewMonth=null; _tripCards=[]; _tripExtraCards=[]; _accOpenState={};
-  if(editingTripId) { navStack.home='detail'; } else { navStack.home='list'; }
+  calStart=null; calEnd=null; calViewYear=null; calViewMonth=null; _accOpenState={};
+  navStack.home='list';
   render();
 }
 window.backFromCreateTrip=backFromCreateTrip;
@@ -1239,7 +1253,19 @@ window.calSelectDay=calSelectDay;
 function calConfirm() {
   if(!calStart||!calEnd) return;
   const days=daysBetween(calStart,calEnd);
-  // 更新日期顯示區塊
+
+  // 若是在首頁卡片編輯某趟既有旅程的日期，直接存檔（日期改變可能讓卡片換組，所以重繪整個首頁）
+  if(_calEditingTripId) {
+    const tripId=_calEditingTripId;
+    DB.trips=DB.trips.map(t=>t.id===tripId?{...t,startDate:calStart,endDate:calEnd}:t);
+    save('trips');
+    closeCal();
+    calStart=null;calEnd=null;_calEditingTripId=null;
+    renderTripList();
+    return;
+  }
+
+  // 建立旅程流程：只更新畫面上的日期顯示，實際存檔在按下「建立旅程」時才發生
   const trigger=document.getElementById('cal-trigger');
   if(trigger) {
     trigger.innerHTML=`
@@ -1264,34 +1290,33 @@ function calConfirm() {
 }
 window.calConfirm=calConfirm;
 
-function submitTrip(existingId) {
+function submitTrip() {
   const name=document.getElementById('tf-name')?.value.trim();
   if(!name){showToast('請填寫旅程名稱');return;}
-  const existing=existingId?DB.trips.find(t=>t.id===existingId):null;
   const trip={
-    id:existingId||uid('trip'),
+    id:uid('trip'),
     name,
     startDate:calStart||todayISO(),
     endDate:calEnd||todayISO(),
-    currency:existing?existing.currency:(document.getElementById('tf-currency')?.value||'JPY'),
+    currency:document.getElementById('tf-currency')?.value||'JPY',
     settleCurrency:'TWD',
-    currentRate:existing?.currentRate||null,
-    tripBudget:document.getElementById('tf-tripbudget')?.value?parseFloat(document.getElementById('tf-tripbudget').value):null,
-    personalBudget:document.getElementById('tf-personalbudget')?.value?parseFloat(document.getElementById('tf-personalbudget').value):null,
-    dailyBudget:document.getElementById('tf-dailybudget')?.value?parseFloat(document.getElementById('tf-dailybudget').value):null,
-    tripCards:_tripCards.length?_tripCards:(existing?.tripCards||[]),
-    extraCards:_tripExtraCards.length?_tripExtraCards:(existing?.extraCards||[]),
-    cashAmount:document.getElementById('tf-cash')?.value?parseFloat(document.getElementById('tf-cash').value):null,
-    status:existing?.status||'active',
-    lockedRate:existing?.lockedRate||null,
+    currentRate:null,
+    tripBudget:null,
+    personalBudget:null,
+    dailyBudget:null,
+    tripCards:[],
+    extraCards:[],
+    cashAmount:null,
+    status:'active',
+    lockedRate:null,
   };
-  if(existing) { DB.trips=DB.trips.map(t=>t.id===trip.id?trip:t); }
-  else { DB.trips.push(trip); }
+  DB.trips.push(trip);
   save('trips');
-  showToast(existing?'已儲存變更':'旅程已建立');
+  showToast('旅程已建立');
   selectedTripId=trip.id;
-  calStart=null;calEnd=null;calViewYear=null;calViewMonth=null;_tripCards=[];_tripExtraCards=[];
-  navStack.home='detail'; render();
+  if(!currentTripId) setCurrentTrip(trip.id); // 建立後若還沒有目前旅程，自動指定這趟
+  calStart=null;calEnd=null;calViewYear=null;calViewMonth=null;
+  navStack.home='list'; render();
 }
 window.submitTrip=submitTrip;
 
@@ -1309,13 +1334,21 @@ window.deleteTripConfirm=deleteTripConfirm;
 // ============================================================
 let detailViewMode='personal';
 
-function renderTripDetail() {
-  const trip=DB.trips.find(t=>t.id===selectedTripId);
-  if(!trip){navStack.home='list';render();return;}
-  maybeAutoFetchOnOpen(trip);
-  const el=document.getElementById('page-home');
+
+// ============================================================
+// 明細頁（獨立分頁，取代原本掃描頁位置）
+// ============================================================
+function renderExpList() {
+  const el=document.getElementById('page-exp');
+  const trip=DB.trips.find(t=>t.id===selectedTripId)||getCurrentTrip()||DB.trips[0];
+  if(!trip){
+    el.innerHTML=`<div class="page-header"><div><div class="page-subtitle">DETAILS</div><div class="page-title">明細</div></div></div>
+      <div class="empty-state"><div class="empty-title">尚未建立旅程</div><div class="empty-sub">先到首頁建立一趟旅程吧</div></div>`;
+    return;
+  }
   const cur=getCur(trip.currency);
   const rate=getRate(trip);
+  maybeAutoFetchOnOpen(trip);
   const tripExps=DB.expenses.filter(e=>e.tripId===trip.id);
   const personalExps=tripExps.filter(e=>!e.isPurchaseFor);
   const displayExps=detailViewMode==='personal'?personalExps:tripExps;
@@ -1331,7 +1364,6 @@ function renderTripDetail() {
     curTotals[code].count++;
   });
   const curCodes=Object.keys(curTotals).sort((a,b)=>{
-    // 旅程幣別排最前，TWD 排最後，其餘照字母排序
     if(a===trip.currency) return -1;
     if(b===trip.currency) return 1;
     if(a==='TWD') return 1;
@@ -1349,7 +1381,6 @@ function renderTripDetail() {
       ${code!=='TWD'?`<span style="color:var(--faint);font-size:11px">≈NT$${fmtNum(t.twd)}</span>`:''}
     </span>`;
   }).join('<span style="color:var(--line);margin:0 8px">·</span>');
-  const todaySpentTwd=personalExps.filter(e=>e.date===today).reduce((s,e)=>s+(e.twdAmount||0),0);
   const totalRebate=personalExps.reduce((sum,e)=>{
     if(e.payment!=='credit'||!e.cardId||!e.subRateId) return sum;
     const card=DB.cards.find(c=>c.id===e.cardId);
@@ -1358,6 +1389,7 @@ function renderTripDetail() {
   },0);
   const tripFunds=(DB.funds||[]).filter(f=>f.tripId===trip.id);
   const fundRemaining=tripFunds.reduce((s,f)=>s+getFundInfo(f,tripExps,null).remaining,0);
+  const todaySpentTwd=personalExps.filter(e=>e.date===today).reduce((s,e)=>s+(e.twdAmount||0),0);
 
   // 預算（統一以台幣計算，避免混幣別旅程加總失真）
   let budgetHtml='';
@@ -1368,7 +1400,7 @@ function renderTripDetail() {
     const pct=Math.min(100,(used/trip.personalBudget)*100);
     const dailyRem=daily-todaySpentTwd;
     budgetHtml=`
-      <div style="margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid var(--line-light)">
+      <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line-light)">
         <div style="display:flex;justify-content:space-between;margin-bottom:8px">
           <span style="font-size:12px;font-weight:600;color:var(--sub)">個人預算</span>
           <span style="font-size:12px;color:var(--faint)">NT$ ${fmtNum(used)} / ${fmtNum(trip.personalBudget)}</span>
@@ -1380,62 +1412,6 @@ function renderTripDetail() {
         </div>
       </div>`;
   }
-
-  el.innerHTML=`
-    <div class="page-header">
-      <div style="display:flex;align-items:center;gap:4px">
-        <button class="back-btn" onclick="navStack.home='list';render()">${ico('back',22)}</button>
-        <div><div class="page-subtitle">${trip.status==='active'?'進行中':'已結束'}</div><div class="page-title">${trip.name}</div></div>
-      </div>
-      <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--sub);font-family:inherit" onclick="editTrip('${trip.id}')">編輯</button>
-    </div>
-
-    <!-- 匯率（精簡為一行,操作移到編輯頁） -->
-    <div style="font-size:12px;color:${rate?'var(--faint)':'var(--accent)'};margin-bottom:14px">
-      ${rate?`${trip.currency} 1 ≈ TWD ${fmtRate(rate)}`:`匯率未設定，前往「編輯」設定`}
-    </div>
-
-    <!-- 個人/旅程切換 -->
-    <div class="pill-row" style="margin-bottom:16px">
-      <button class="pill ${detailViewMode==='personal'?'active':''}" onclick="setDetailMode('personal')">個人</button>
-      <button class="pill ${detailViewMode==='trip'?'active':''}" onclick="setDetailMode('trip')">旅程</button>
-    </div>
-
-    <!-- 合計（換算台幣為主視覺） -->
-    <div style="font-size:11px;color:var(--faint);font-weight:700;letter-spacing:.06em;margin-bottom:2px">合計（換算台幣）</div>
-    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:38px;font-weight:700;letter-spacing:-.02em;line-height:1.1">NT$ ${fmtNum(totalTwd)}</div>
-      <span style="font-size:13px;color:var(--green)">預估回饋 NT$ ${fmtNum(totalRebate)}</span>
-    </div>
-
-    <!-- 幣別明細（合併一行） -->
-    ${curCodes.length?`<div style="font-size:12.5px;color:var(--sub);margin-bottom:14px">${curLinesHtml}</div>`:''}
-
-    ${tripFunds.length?`<div style="font-size:13px;color:var(--sub);margin-bottom:14px">公基金剩餘 ${cur.code} ${fmtNum(fundRemaining)}</div>`:''}
-
-    ${budgetHtml}
-
-    <button onclick="selectedTripId='${trip.id}';switchTab('exp')" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;cursor:pointer;font-family:inherit;margin-top:4px">
-      <span style="font-size:14px;font-weight:700">查看完整消費紀錄</span>
-      <span style="color:var(--faint);display:flex">${ico('forward',18)}</span>
-    </button>`;
-}
-
-// ============================================================
-// 明細頁（獨立分頁，取代原本掃描頁位置）
-// ============================================================
-function renderExpList() {
-  const el=document.getElementById('page-exp');
-  const trip=DB.trips.find(t=>t.id===selectedTripId)||DB.trips.find(t=>getTripPhase(t)==='active')||DB.trips[0];
-  if(!trip){
-    el.innerHTML=`<div class="page-header"><div><div class="page-subtitle">DETAILS</div><div class="page-title">明細</div></div></div>
-      <div class="empty-state"><div class="empty-title">尚未建立旅程</div><div class="empty-sub">先到首頁建立一趟旅程吧</div></div>`;
-    return;
-  }
-  const cur=getCur(trip.currency);
-  const tripExps=DB.expenses.filter(e=>e.tripId===trip.id);
-  const personalExps=tripExps.filter(e=>!e.isPurchaseFor);
-  const displayExps=detailViewMode==='personal'?personalExps:tripExps;
 
   const searchedExps=displayExps.filter(e=>{
     if(expFilterCatId && e.categoryId!==expFilterCatId) return false;
@@ -1500,18 +1476,38 @@ function renderExpList() {
     }).join('');
 
   el.innerHTML=`
+    <div class="page-header" style="padding-bottom:8px">
+      <div><div class="page-subtitle">DETAILS</div><div class="page-title">${trip.name}</div></div>
+    </div>
+
+    <!-- 匯率（精簡為一行） -->
+    <div style="font-size:12px;color:${rate?'var(--faint)':'var(--accent)'};margin-bottom:14px">
+      ${rate?`${trip.currency} 1 ≈ TWD ${fmtRate(rate)}`:`匯率未設定，前往首頁旅程卡片設定`}
+    </div>
+
+    <!-- 個人/旅程切換 -->
+    <div class="pill-row" style="margin-bottom:16px">
+      <button class="pill ${detailViewMode==='personal'?'active':''}" onclick="setDetailMode('personal');renderExpList()">個人</button>
+      <button class="pill ${detailViewMode==='trip'?'active':''}" onclick="setDetailMode('trip');renderExpList()">旅程</button>
+    </div>
+
+    <!-- 合計（換算台幣為主視覺） -->
+    <div style="font-size:11px;color:var(--faint);font-weight:700;letter-spacing:.06em;margin-bottom:2px">合計（換算台幣）</div>
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:38px;font-weight:700;letter-spacing:-.02em;line-height:1.1">NT$ ${fmtNum(totalTwd)}</div>
+      <span style="font-size:13px;color:var(--green)">預估回饋 NT$ ${fmtNum(totalRebate)}</span>
+    </div>
+
+    <!-- 幣別明細（合併一行） -->
+    ${curCodes.length?`<div style="font-size:12.5px;color:var(--sub);margin-bottom:14px">${curLinesHtml}</div>`:''}
+
+    ${tripFunds.length?`<div style="font-size:13px;color:var(--sub);margin-bottom:14px">公基金剩餘 ${cur.code} ${fmtNum(fundRemaining)}</div>`:''}
+
+    ${budgetHtml}
+
+    <div style="font-size:15px;font-weight:700;border-top:1px solid var(--line-light);padding-top:14px;margin-bottom:12px">消費紀錄</div>
+
     <div style="position:-webkit-sticky;position:sticky;top:0;background:var(--bg);z-index:9;padding-bottom:8px">
-      <div class="page-header" style="position:static;padding-bottom:8px">
-        <div><div class="page-subtitle">DETAILS</div><div class="page-title">明細</div></div>
-      </div>
-      <div style="font-size:13px;font-weight:700;color:var(--sub);margin-bottom:12px">${trip.name}</div>
-
-      <!-- 個人/旅程切換 -->
-      <div class="pill-row" style="margin-bottom:14px">
-        <button class="pill ${detailViewMode==='personal'?'active':''}" onclick="setDetailMode('personal');renderExpList()">個人</button>
-        <button class="pill ${detailViewMode==='trip'?'active':''}" onclick="setDetailMode('trip');renderExpList()">旅程</button>
-      </div>
-
       <div style="position:relative;margin-bottom:${filterCats.length?'10px':'0'}">
         <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--faint);display:flex">${ico('search',15)}</span>
         <input type="text" id="exp-search-input" placeholder="搜尋店名、品項、備註" value="${expSearchQ}"
@@ -1586,13 +1582,12 @@ async function autoFetchRate(tripId, silent=false) {
 }
 window.autoFetchRate = autoFetchRate;
 
-// 匯率變更後，依目前所在畫面重新渲染正確的頁面（編輯旅程頁 或 旅程詳情頁）
+// 匯率變更後，重新渲染目前畫面（首頁卡片或明細頁都適用）
 function reRenderAfterRateChange(tripId) {
-  if (navStack.home==='edit' && editingTripId===tripId) renderCreateTrip();
-  else if (selectedTripId===tripId) renderTripDetail();
+  render();
 }
 
-// 進入旅程詳情頁時，若尚未設定匯率，靜默嘗試自動抓取一次（同一旅程同一天只嘗試一次）
+// 進入明細頁時，若尚未設定匯率，靜默嘗試自動抓取一次（同一旅程同一天只嘗試一次）
 function maybeAutoFetchOnOpen(trip) {
   if (!trip || trip.status!=='active' || trip.lockedRate) return;
   const key = trip.id + '_' + todayISO();
@@ -1605,7 +1600,7 @@ function maybeAutoFetchOnOpen(trip) {
     if (cached) {
       DB.trips = DB.trips.map(t=>t.id===trip.id?{...t, currentRate:parseFloat(cached), rateSource:'auto'}:t);
       save('trips');
-      if (selectedTripId===trip.id) renderTripDetail();
+      renderExpList();
       return;
     }
   } catch(e){}
@@ -1664,22 +1659,8 @@ function confirmRate(tripId) {
 }
 window.confirmRate=confirmRate;
 
-function setDetailMode(mode) { detailViewMode=mode; renderTripDetail(); }
+function setDetailMode(mode) { detailViewMode=mode; }
 window.setDetailMode=setDetailMode;
-
-function editTrip(id) {
-  editingTripId=id;
-  const trip=DB.trips.find(t=>t.id===id);
-  calStart=trip?.startDate||todayISO();
-  calEnd=trip?.endDate||todayISO();
-  calViewYear=parseInt(calStart.slice(0,4));
-  calViewMonth=parseInt(calStart.slice(5,7))-1;
-  _tripCards=[...(trip?.tripCards||[])];
-  _tripExtraCards=[...(trip?.extraCards||[])];
-  _accOpenState={};
-  navStack.home='edit'; render();
-}
-window.editTrip=editTrip;
 
 function openExpense(id) {
   editingExpId=id; expandedPrefill=null; addSubView='form'; switchTab('add', {keepEdit:true});
@@ -1709,17 +1690,35 @@ let qCurrency=null;
 
 function getActiveTrip() { return DB.trips.find(t=>t.status==='active'); }
 
+// 「目前旅程」：明細/快速記帳兩頁預設要用哪一趟旅程，在首頁卡片上用星星標記，會記住
+let currentTripId = lsGet('currentTripId', null);
+function setCurrentTrip(id) {
+  currentTripId = id;
+  lsSet('currentTripId', id);
+}
+window.setCurrentTrip=setCurrentTrip;
+
+function getCurrentTrip() {
+  const candidates=DB.trips.filter(t=>getTripPhase(t)==='active'||getTripPhase(t)==='upcoming');
+  if(!candidates.length) return null;
+  const marked=candidates.find(t=>t.id===currentTripId);
+  if(marked) return marked;
+  if(candidates.length===1) return candidates[0]; // 只有一趟時不用特別標記，自動當作目前旅程
+  return null; // 多趟且沒標記 -> 由呼叫端決定怎麼提示
+}
+
 function renderAdd() {
   const el=document.getElementById('page-add');
-  const trip=editingExpId?DB.trips.find(t=>t.id===DB.expenses.find(e=>e.id===editingExpId)?.tripId):getActiveTrip();
+  const trip=editingExpId?DB.trips.find(t=>t.id===DB.expenses.find(e=>e.id===editingExpId)?.tripId):getCurrentTrip();
 
   if(!trip) {
+    const hasCandidates=DB.trips.some(t=>getTripPhase(t)==='active'||getTripPhase(t)==='upcoming');
     el.innerHTML=`
       <div class="page-header"><div><div class="page-subtitle">QUICK ADD</div><div class="page-title">記一筆</div></div></div>
       <div class="empty-state">
-        <div class="empty-title">請先建立旅程</div>
-        <div class="empty-sub">建立旅程後即可開始記帳</div>
-        <button class="btn-primary" style="max-width:200px;margin:0 auto;display:block" onclick="switchTab('home');goCreateTrip()">建立旅程</button>
+        <div class="empty-title">${hasCandidates?'請先在首頁標記「目前旅程」':'請先建立旅程'}</div>
+        <div class="empty-sub">${hasCandidates?'你有好幾趟進行中/即將出發的旅程，點旅程卡片上的星星標記一趟':'建立旅程後即可開始記帳'}</div>
+        <button class="btn-primary" style="max-width:200px;margin:0 auto;display:block" onclick="switchTab('home')">${hasCandidates?'前往首頁':'建立旅程'}</button>
       </div>`;
     return;
   }
@@ -2495,20 +2494,6 @@ function renderSettings() {
       </div>
     </div>
 
-    <!-- 分類管理 -->
-    <div class="accordion">
-      <button class="accordion-header" onclick="toggleAccordion(this)">
-        <div class="accordion-title">${ico('box',18,'var(--sub)')} 分類管理</div>
-        <span class="accordion-chevron">${ico('chevdown',18)}</span>
-      </button>
-      <div class="accordion-body">
-        <div id="drag-cat-list">${buildDragCatList()}</div>
-        <div id="add-cat-section" style="margin-top:8px">
-          <button class="btn-primary" style="background:var(--accent-light);color:var(--accent);border:1.5px solid var(--accent)" onclick="showAddCat()">+ 新增分類</button>
-        </div>
-      </div>
-    </div>
-
     <!-- 代購對象 -->
     <div class="accordion">
       <button class="accordion-header" onclick="toggleAccordion(this)">
@@ -3072,11 +3057,13 @@ window.deleteCardConfirm=deleteCardConfirm;
 function editFund(id){settingsEditFundId=id;navStack.settings='edit-fund';render();}
 window.editFund=editFund;
 
+let _fundFormTripHint=null; // 從首頁卡片點「+新增公基金」進來時,記住是哪趟旅程,當作表單預設值
+
 function renderFundForm(){
   const el=document.getElementById('page-settings');
   const fund=settingsEditFundId?DB.funds.find(f=>f.id===settingsEditFundId):null;
   const isEdit=!!fund;
-  const activeTrip=getActiveTrip();
+  const activeTrip=DB.trips.find(t=>t.id===_fundFormTripHint)||getActiveTrip();
   const trip=fund?DB.trips.find(t=>t.id===fund.tripId):activeTrip;
   if(!trip&&!isEdit){
     el.innerHTML=`<div class="page-header"><div style="display:flex;align-items:center;gap:4px"><button class="back-btn" onclick="navStack.settings='main';render()">${ico('back',22)}</button><div><div class="page-subtitle">GROUP FUND</div><div class="page-title">新增公基金</div></div></div></div><div class="empty-state"><div class="empty-title">請先建立旅程</div></div>`;
