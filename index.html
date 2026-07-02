@@ -432,6 +432,58 @@ function compressImageToBase64(file, maxDim=900, quality=0.6) {
   });
 }
 
+// 全螢幕照片檢視（取代 window.open，避免 iOS PWA 下開新分頁失敗）
+function openPhotoLightbox(photos, startIdx) {
+  closePhotoLightbox();
+  if(!photos || !photos.length) return;
+  let idx=startIdx||0;
+  const overlay=document.createElement('div');
+  overlay.id='photo-lightbox-overlay';
+  overlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.92);z-index:10000;display:flex;align-items:center;justify-content:center';
+  overlay.onclick=function(e){ if(e.target===overlay) closePhotoLightbox(); };
+
+  const img=document.createElement('img');
+  img.style.cssText='max-width:92%;max-height:80%;object-fit:contain;border-radius:8px;pointer-events:none';
+  img.src=photos[idx];
+  overlay.appendChild(img);
+
+  const closeBtn=document.createElement('button');
+  closeBtn.innerHTML=ico('x',20,'#fff');
+  closeBtn.style.cssText='position:absolute;top:calc(16px + var(--safe-t, 0px));right:16px;width:36px;height:36px;border-radius:999px;background:rgba(255,255,255,.15);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer';
+  closeBtn.onclick=function(e){ e.stopPropagation(); closePhotoLightbox(); };
+  overlay.appendChild(closeBtn);
+
+  if(photos.length>1){
+    const counter=document.createElement('div');
+    counter.style.cssText='position:absolute;bottom:calc(20px + var(--safe-b, 0px));left:0;right:0;text-align:center;color:rgba(255,255,255,.75);font-size:12px;font-weight:600';
+    counter.textContent=`${idx+1} / ${photos.length}`;
+    overlay.appendChild(counter);
+
+    let _tx=null;
+    overlay.ontouchstart=function(e){ _tx=e.touches[0].clientX; };
+    overlay.ontouchend=function(e){
+      if(_tx===null) return;
+      const dx=e.changedTouches[0].clientX-_tx;
+      _tx=null;
+      if(Math.abs(dx)<40) return;
+      idx = dx<0 ? Math.min(idx+1, photos.length-1) : Math.max(idx-1, 0);
+      img.src=photos[idx];
+      counter.textContent=`${idx+1} / ${photos.length}`;
+    };
+  }
+
+  document.body.appendChild(overlay);
+  document.body.style.overflow='hidden';
+}
+window.openPhotoLightbox=openPhotoLightbox;
+
+function closePhotoLightbox() {
+  const overlay=document.getElementById('photo-lightbox-overlay');
+  if(overlay) overlay.remove();
+  document.body.style.overflow='';
+}
+window.closePhotoLightbox=closePhotoLightbox;
+
 // 完整表單的拍照附件區塊（虛線框 + 縮圖）
 function renderEfPhotoSection() {
   const el=document.getElementById('ef-photos-section');
@@ -444,7 +496,7 @@ function renderEfPhotoSection() {
     ${_efPhotos.length?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
       ${_efPhotos.map((src,idx)=>`
         <div style="position:relative;width:52px;height:52px">
-          <img src="${src}" style="width:100%;height:100%;object-fit:cover;border-radius:10px;cursor:pointer" onclick="window.open('${src}','_blank')">
+          <img src="${src}" style="width:100%;height:100%;object-fit:cover;border-radius:10px;cursor:pointer" onclick="openPhotoLightbox(_efPhotos, ${idx})">
           <button onclick="removeExpPhoto(${idx})" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:999px;background:var(--text);color:#fff;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0">${ico('x',11,'#fff')}</button>
         </div>`).join('')}
     </div>`:''}`;
