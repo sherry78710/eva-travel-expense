@@ -373,6 +373,7 @@ const ICONS = {
   search:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>`,
   camera:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>`,
   star:`<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+  sliders:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>`,
 };
 function ico(name, size=18, color='currentColor') {
   const svg = ICONS[name] || ICONS.box;
@@ -782,7 +783,7 @@ let currentTab='add';
 // 子頁面堆疊
 let navStack = { home:'list', settings:'main' };
 let selectedTripId=null, editingTripId=null;
-let expSearchQ='', expFilterCatId=null;
+let expSearchQ='', expFilterCatId=null, expFilterPayment=null, expFilterPurchase=false, _expFilterOpen=false;
 let editingExpId=null, expandedPrefill=null, addSubView='quick';
 let settingsEditCardId=null, settingsEditFundId=null;
 
@@ -1048,7 +1049,7 @@ function renderTripList() {
 }
 
 function goCreateTrip() { navStack.home='create'; render(); }
-function openTrip(id) { selectedTripId=id; expSearchQ=''; expFilterCatId=null; switchTab('exp'); }
+function openTrip(id) { selectedTripId=id; expSearchQ=''; expFilterCatId=null; expFilterPayment=null; expFilterPurchase=false; _expFilterOpen=false; switchTab('exp'); }
 window.goCreateTrip=goCreateTrip; window.openTrip=openTrip;
 
 // ============================================================
@@ -1469,6 +1470,8 @@ function renderExpList() {
 
   const searchedExps=displayExps.filter(e=>{
     if(expFilterCatId && e.categoryId!==expFilterCatId) return false;
+    if(expFilterPayment && e.payment!==expFilterPayment) return false;
+    if(expFilterPurchase && !e.isPurchaseFor) return false;
     if(expSearchQ){
       const q=expSearchQ.toLowerCase();
       const hit=(e.name||'').toLowerCase().includes(q)||(e.store||'').toLowerCase().includes(q)||(e.note||'').toLowerCase().includes(q);
@@ -1476,15 +1479,15 @@ function renderExpList() {
     }
     return true;
   });
-  const usedCatIds=[...new Set(displayExps.map(e=>e.categoryId))];
-  const filterCats=DB.categories.filter(c=>usedCatIds.includes(c.id));
+  const searchedTotalTwd=searchedExps.reduce((s,e)=>s+(e.twdAmount||0),0);
+  const hasActiveFilter=!!(expFilterCatId||expFilterPayment||expFilterPurchase);
 
   const grouped={};
   searchedExps.forEach(e=>{if(!grouped[e.date])grouped[e.date]=[];grouped[e.date].push(e);});
   const sortedDates=Object.keys(grouped).sort((a,b)=>b.localeCompare(a));
 
   const timelineHtml=sortedDates.length===0?
-    `<div class="empty-state"><div class="empty-title" style="font-size:14px">${expSearchQ||expFilterCatId?'找不到符合的消費紀錄':'還沒有消費紀錄'}</div><div class="empty-sub">${expSearchQ||expFilterCatId?'試試看別的關鍵字或清除篩選':'點底部「記帳」新增第一筆消費'}</div></div>`:
+    `<div class="empty-state"><div class="empty-title" style="font-size:14px">${expSearchQ||hasActiveFilter?'找不到符合的消費紀錄':'還沒有消費紀錄'}</div><div class="empty-sub">${expSearchQ||hasActiveFilter?'試試看別的關鍵字或清除篩選':'點底部「記帳」新增第一筆消費'}</div></div>`:
     sortedDates.map(date=>{
       const items=grouped[date].sort((a,b)=>(b.time||'').localeCompare(a.time||''));
       const dayTotal=items.reduce((s,e)=>s+(e.twdAmount||0),0);
@@ -1559,22 +1562,52 @@ function renderExpList() {
 
     ${budgetHtml}
 
-    <div style="font-size:15px;font-weight:700;border-top:1px solid var(--line-light);padding-top:14px;margin-bottom:12px">消費紀錄</div>
-
     <div style="position:-webkit-sticky;position:sticky;top:0;background:var(--bg);z-index:9;padding-bottom:8px">
-      <div style="position:relative;margin-bottom:${filterCats.length?'10px':'0'}">
-        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--faint);display:flex">${ico('search',15)}</span>
-        <input type="text" id="exp-search-input" placeholder="搜尋店名、品項、備註" value="${expSearchQ}"
-          oninput="expSearchQ=this.value;renderExpList();setTimeout(()=>{const el=document.getElementById('exp-search-input');if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}},0)"
-          style="width:100%;padding:10px 12px 10px 36px;border-radius:999px;border:1px solid var(--line);background:var(--card);font-size:13px;color:var(--text);font-family:inherit">
+      <div style="display:flex;align-items:center;gap:8px;border-top:1px solid var(--line-light);padding-top:14px">
+        <div style="font-size:15px;font-weight:700;flex-shrink:0;white-space:nowrap">消費紀錄</div>
+        <div style="position:relative;flex:1;min-width:0">
+          <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--faint);display:flex">${ico('search',14)}</span>
+          <input type="text" id="exp-search-input" placeholder="搜尋店名、品項、備註" value="${expSearchQ}"
+            oninput="expSearchQ=this.value;renderExpList();setTimeout(()=>{const el=document.getElementById('exp-search-input');if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}},0)"
+            style="width:100%;padding:9px 10px 9px 32px;border-radius:999px;border:1px solid var(--line);background:var(--card);font-size:12.5px;color:var(--text);font-family:inherit;box-sizing:border-box">
+        </div>
+        <button onclick="_expFilterOpen=!_expFilterOpen;renderExpList()" style="position:relative;flex-shrink:0;width:36px;height:36px;border-radius:10px;border:1.5px solid ${hasActiveFilter?'var(--accent)':'var(--line)'};background:${hasActiveFilter?'var(--accent-light)':'var(--card)'};color:${hasActiveFilter?'var(--accent)':'var(--sub)'};display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0">
+          ${ico('sliders',15)}
+          ${hasActiveFilter?`<span style="position:absolute;top:-3px;right:-3px;width:8px;height:8px;border-radius:999px;background:var(--accent);border:1.5px solid var(--bg)"></span>`:''}
+        </button>
       </div>
-      ${filterCats.length?`<div class="pill-row" style="flex-wrap:wrap">
-        ${filterCats.map(c=>`<button class="pill sm ${expFilterCatId===c.id?'active':''}" onclick="expFilterCatId=expFilterCatId==='${c.id}'?null:'${c.id}';renderExpList()">${c.name}</button>`).join('')}
+
+      ${_expFilterOpen?`
+      <div style="margin-top:10px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px">
+        <div style="font-size:11px;color:var(--faint);margin-bottom:10px">找到 ${searchedExps.length} 筆 · NT$ ${fmtNum(searchedTotalTwd)}</div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:6px">分類</div>
+        <div class="pill-row" style="flex-wrap:wrap;margin-bottom:14px">
+          ${DB.categories.map(c=>`<button class="pill sm ${expFilterCatId===c.id?'active':''}" onclick="expFilterCatId=expFilterCatId==='${c.id}'?null:'${c.id}';renderExpList()">${c.name}</button>`).join('')}
+        </div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:6px">支付方式</div>
+        <div class="pill-row" style="flex-wrap:wrap;margin-bottom:14px">
+          ${PAYMENT_METHODS.map(p=>`<button class="pill sm ${expFilterPayment===p.id?'active':''}" onclick="expFilterPayment=expFilterPayment==='${p.id}'?null:'${p.id}';renderExpList()">${p.name}</button>`).join('')}
+        </div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:6px">其他條件</div>
+        <div class="pill-row" style="flex-wrap:wrap;${hasActiveFilter?'margin-bottom:12px':''}">
+          <button class="pill sm ${expFilterPurchase?'active':''}" onclick="expFilterPurchase=!expFilterPurchase;renderExpList()">代購</button>
+        </div>
+
+        ${hasActiveFilter?`<button onclick="clearExpFilters()" style="width:100%;padding:9px;border-radius:999px;border:1.5px solid var(--line);background:none;color:var(--sub);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">清除篩選</button>`:''}
       </div>`:''}
     </div>
     ${timelineHtml}`;
 }
 window.renderExpList=renderExpList;
+
+function clearExpFilters() {
+  expFilterCatId=null; expFilterPayment=null; expFilterPurchase=false;
+  renderExpList();
+}
+window.clearExpFilters=clearExpFilters;
 
 
 let _rateFetching = false;
