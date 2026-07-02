@@ -2766,15 +2766,7 @@ function renderSettings() {
         <span class="accordion-chevron">${ico('chevdown',18)}</span>
       </button>
       <div class="accordion-body">
-        ${DB.cards.length===0?`<div style="font-size:12px;color:var(--faint);margin-bottom:12px">尚未新增信用卡</div>`:`
-        ${DB.cards.map(card=>`
-          <div class="list-row" style="cursor:pointer" onclick="editCard('${card.id}')">
-            <div style="flex:1;min-width:0">
-              <div style="font-size:14px;font-weight:700;margin-bottom:4px">${card.name}</div>
-              <div style="display:flex;flex-wrap:wrap;gap:8px">${(card.subRates||[]).map(s=>`<span style="font-size:11px;color:var(--sub)">${s.name} ${s.rate}%</span>`).join('')}</div>
-            </div>
-            ${ico('forward',16,'var(--faint)')}
-          </div>`).join('')}`}
+        ${DB.cards.length===0?`<div style="font-size:12px;color:var(--faint);margin-bottom:12px">尚未新增信用卡</div>`:`<div id="drag-card-list">${buildDragCardList()}</div>`}
         <button class="btn-primary" style="background:var(--accent-light);color:var(--accent);border:1.5px solid var(--accent);margin-top:8px" onclick="navStack.settings='add-card';settingsEditCardId=null;render()">+ 新增信用卡</button>
       </div>
     </div>
@@ -3051,8 +3043,8 @@ window.toggleAccordion=toggleAccordion;
 function buildDragCatList() {
   return DB.categories.map((cat,i)=>`
     <div class="drag-row" id="drag-${cat.id}" draggable="true"
-      ontouchstart="touchDragStart(event,${i})"
-      ondragstart="dragStart(${i})" ondragover="dragOver(event,${i})" ondrop="dragDrop(${i})" ondragend="dragEnd()"
+      ontouchstart="touchDragStart(event,${i},'cat')"
+      ondragstart="dragStart(${i},'cat')" ondragover="dragOver(event,${i},'cat')" ondrop="dragDrop(${i},'cat')" ondragend="dragEnd('cat')"
       style="cursor:grab">
       <span style="width:18px;height:18px;display:inline-flex;color:var(--sub);margin-right:10px">${ico(cat.icon,18)}</span>
       <span style="flex:1;font-size:14px">${cat.name}</span>
@@ -3061,19 +3053,38 @@ function buildDragCatList() {
     </div>`).join('');
 }
 
-// ---- 分類拖曳排序 (即時跟手指版) ----
-let dragIdx=null, dragOverIdx=null;
-function dragStart(i){dragIdx=i;}
-function dragOver(e,i){e.preventDefault();dragOverIdx=i;document.querySelectorAll('.drag-row').forEach((r,j)=>r.classList.toggle('drag-over',j===i&&i!==dragIdx));}
-function dragDrop(i){reorderCat(dragIdx,i);dragIdx=null;dragOverIdx=null;}
-function dragEnd(){document.querySelectorAll('.drag-row').forEach(r=>r.classList.remove('dragging','drag-over'));dragIdx=null;dragOverIdx=null;}
+// 信用卡拖曳排序
+function buildDragCardList() {
+  return DB.cards.map((card,i)=>`
+    <div class="drag-row" id="drag-card-${card.id}" draggable="true"
+      ontouchstart="touchDragStart(event,${i},'card')"
+      ondragstart="dragStart(${i},'card')" ondragover="dragOver(event,${i},'card')" ondrop="dragDrop(${i},'card')" ondragend="dragEnd('card')"
+      style="cursor:grab">
+      <div style="flex:1;min-width:0;cursor:pointer" onclick="editCard('${card.id}')">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">${card.name}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">${(card.subRates||[]).map(s=>`<span style="font-size:11px;color:var(--sub)">${s.name} ${s.rate}%</span>`).join('')}</div>
+      </div>
+      <span style="color:var(--line);margin:0 6px;display:flex">${ico('drag',16)}</span>
+      ${ico('forward',16,'var(--faint)')}
+    </div>`).join('');
+}
+
+// ---- 拖曳排序 (即時跟手指版，支援分類/信用卡兩種清單) ----
+function dragRowsFor(kind){ return document.querySelectorAll(kind==='card'?'#drag-card-list .drag-row':'#drag-cat-list .drag-row'); }
+function reorderByKind(kind,from,to){ kind==='card'?reorderCard(from,to):reorderCat(from,to); }
+
+let dragIdx=null, dragOverIdx=null, dragKind='cat';
+function dragStart(i,kind='cat'){dragIdx=i;dragKind=kind;}
+function dragOver(e,i,kind='cat'){e.preventDefault();dragOverIdx=i;dragRowsFor(kind).forEach((r,j)=>r.classList.toggle('drag-over',j===i&&i!==dragIdx));}
+function dragDrop(i,kind='cat'){reorderByKind(kind,dragIdx,i);dragIdx=null;dragOverIdx=null;}
+function dragEnd(kind='cat'){dragRowsFor(kind).forEach(r=>r.classList.remove('dragging','drag-over'));dragIdx=null;dragOverIdx=null;}
 window.dragStart=dragStart;window.dragOver=dragOver;window.dragDrop=dragDrop;window.dragEnd=dragEnd;
 
 // Touch拖曳 - 即時跟手指移動
-let _tDragIdx=null, _tDragRows=[], _tDragOver=null, _tDragTimer=null;
+let _tDragIdx=null, _tDragRows=[], _tDragOver=null, _tDragTimer=null, _tDragKind='cat';
 let _tDragEl=null, _tDragClone=null, _tDragOffsetY=0, _tDragRowH=0;
 
-function touchDragStart(e,i){
+function touchDragStart(e,i,kind='cat'){
   if(e.target.closest('button')) return;
   const startY=e.touches[0].clientY;
   let cancelled=false;
@@ -3091,8 +3102,9 @@ function touchDragStart(e,i){
     document.removeEventListener('touchmove',onEarlyMove);
     if(cancelled) return;
 
+    _tDragKind=kind;
     _tDragIdx=i;
-    _tDragRows=Array.from(document.querySelectorAll('.drag-row'));
+    _tDragRows=Array.from(dragRowsFor(kind));
     _tDragEl=_tDragRows[i];
     if(!_tDragEl) return;
 
@@ -3175,7 +3187,7 @@ function _touchDragEnd(){
   });
 
   if(_tDragIdx!==null&&_tDragOver!==null&&_tDragIdx!==_tDragOver){
-    reorderCat(_tDragIdx,_tDragOver);
+    reorderByKind(_tDragKind,_tDragIdx,_tDragOver);
   }
   _tDragIdx=null;_tDragOver=null;_tDragRows=[];_tDragEl=null;
 }
@@ -3188,6 +3200,15 @@ function reorderCat(from,to){
   arr.splice(to,0,moved);
   DB.categories=arr; save('categories');
   document.getElementById('drag-cat-list').innerHTML=buildDragCatList();
+}
+
+function reorderCard(from,to){
+  if(from===null||to===null||from===to) return;
+  const arr=[...DB.cards];
+  const [moved]=arr.splice(from,1);
+  arr.splice(to,0,moved);
+  DB.cards=arr; save('cards');
+  document.getElementById('drag-card-list').innerHTML=buildDragCardList();
 }
 
 function showAddCat(){
