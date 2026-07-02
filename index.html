@@ -2050,14 +2050,11 @@ function updateQTwd(tripId) {
     // 同步更新展開中的方案清單各自的剩餘額度顯示
     if(qSelectedCardId===card.id&&subs.length>1){
       subs.forEach(sub=>{
-        const subContainer=document.getElementById(`q-sub-${sub.id}`);
-        if(!subContainer) return;
+        const remSpan=document.getElementById(`q-sub-rem-${sub.id}`);
+        if(!remSpan) return;
         const subInfo=getCardRebate(card,sub.id,[],null);
-        const lastSpan=subContainer.querySelector('span:last-child');
-        if(lastSpan){
-          lastSpan.textContent=subInfo.remaining<=0?'額度已用完':`剩 NT$${fmtNum(subInfo.remaining)}`;
-          lastSpan.style.color=subInfo.remaining<=0?'var(--red)':'var(--faint)';
-        }
+        remSpan.textContent=subInfo.remaining<=0?'額度已用完':`剩 NT$${fmtNum(subInfo.remaining)}`;
+        remSpan.style.color=subInfo.remaining<=0?'var(--red)':'var(--faint)';
       });
     }
   });
@@ -2105,11 +2102,11 @@ function buildQSubRateList(card) {
     ${subs.map(sub=>{
       const info=getCardRebate(card,sub.id,[],null);
       const isActive=qSelectedSubRateId===sub.id;
-      return `<button onclick="selectQSubRate('${card.id}','${sub.id}')" id="q-sub-${sub.id}"
+      return `<button onclick="selectQSubRate('${card.id}','${sub.id}')" id="q-sub-${sub.id}" class="q-sub-btn"
         style="display:flex;align-items:center;gap:10px;width:100%;background:${isActive?'var(--accent-light)':'none'};border:1.5px solid ${isActive?'var(--accent)':'var(--line-light)'};border-radius:10px;cursor:pointer;padding:8px 10px;margin-top:6px;font-family:inherit;text-align:left;opacity:${info.remaining<=0?.5:1}">
         <span id="q-sub-dot-${sub.id}" style="width:14px;height:14px;border-radius:999px;border:1.5px solid ${isActive?'var(--accent)':'var(--line)'};background:${isActive?'var(--accent)':'transparent'};flex-shrink:0;display:flex;align-items:center;justify-content:center">${isActive?`<span style="width:5px;height:5px;border-radius:999px;background:#fff"></span>`:''}</span>
-        <span style="flex:1;font-size:12.5px;font-weight:${isActive?700:500};color:${isActive?'var(--text)':'var(--sub)'}">${sub.name} · ${sub.rate}%</span>
-        <span style="font-size:10.5px;color:${info.remaining<=0?'var(--red)':'var(--faint)'}">${info.remaining<=0?'額度已用完':`剩 NT$${fmtNum(info.remaining)}`}</span>
+        <span id="q-sub-name-${sub.id}" style="flex:1;font-size:12.5px;font-weight:${isActive?700:500};color:${isActive?'var(--text)':'var(--sub)'}">${sub.name} · ${sub.rate}%</span>
+        <span id="q-sub-rem-${sub.id}" style="font-size:10.5px;color:${info.remaining<=0?'var(--red)':'var(--faint)'}">${info.remaining<=0?'額度已用完':`剩 NT$${fmtNum(info.remaining)}`}</span>
       </button>`;
     }).join('')}
   </div>`;
@@ -2117,14 +2114,14 @@ function buildQSubRateList(card) {
 
 function selectQSubRate(cardId,subId) {
   qSelectedSubRateId=subId;
-  document.querySelectorAll('[id^="q-sub-"]:not([id^="q-sub-dot-"])').forEach(b=>{
+  document.querySelectorAll('.q-sub-btn').forEach(b=>{
     const sid=b.id.replace('q-sub-','');
     const isActive=sid===subId;
     b.style.background=isActive?'var(--accent-light)':'none';
     b.style.borderColor=isActive?'var(--accent)':'var(--line-light)';
     const dot=document.getElementById(`q-sub-dot-${sid}`);
     if(dot){ dot.style.borderColor=isActive?'var(--accent)':'var(--line)'; dot.style.background=isActive?'var(--accent)':'transparent'; dot.innerHTML=isActive?`<span style="width:5px;height:5px;border-radius:999px;background:#fff"></span>`:''; }
-    const nameSpan=b.querySelector('span:nth-child(2)');
+    const nameSpan=document.getElementById(`q-sub-name-${sid}`);
     if(nameSpan){ nameSpan.style.fontWeight=isActive?700:500; nameSpan.style.color=isActive?'var(--text)':'var(--sub)'; }
   });
   updateQTwd(qTripId);
