@@ -720,7 +720,9 @@ function getCardRebate(card, subId, tripExps, excludeId) {
     .filter(e=>e.payment==='credit'&&e.cardId===card.id&&e.subRateId===subId&&e.id!==excludeId)
     .reduce((s,e)=>s+(e.twdAmount||0)*(sub.rate/100),0);
   const totalUsed = (sub.used||0)+usedInTrip;
-  const unlimited = !!sub.unlimited;
+  // 沒填上限、也沒勾無上限 = 視同沒有設定額度限制，不應該顯示「額度已用完」
+  const noCapSet = sub.limit==null || sub.limit==='' || sub.limit<=0;
+  const unlimited = !!sub.unlimited || noCapSet;
   const remaining = unlimited ? Infinity : Math.max(0,(sub.limit||0)-totalUsed);
   return {rate:sub.rate,limit:unlimited?Infinity:(sub.limit||0),totalUsed,remaining,unlimited};
 }
@@ -1750,7 +1752,9 @@ function setDetailMode(mode) { detailViewMode=mode; }
 window.setDetailMode=setDetailMode;
 
 function openExpense(id) {
-  editingExpId=id; expandedPrefill=null; addSubView='form'; switchTab('add', {keepEdit:true});
+  editingExpId=id; expandedPrefill=null; addSubView='form';
+  _efCur=null;_efCatId=null;_efPayment=null;_efCardId=null;_efSubRateId=null;_efFundId=null;_efPurchaseForId=null;_efPhotosLoadedFor=null;
+  switchTab('add', {keepEdit:true});
 }
 window.openExpense=openExpense;
 
@@ -2124,27 +2128,31 @@ function renderExpenseForm(trip) {
   const defPurchaseForId=e0?.purchaseForId??null;
   const twdPreview=defAmt&&defCur!=='TWD'&&rate?fmtNum(parseFloat(defAmt)*(rate||1)):'';
 
-  // 信用卡回饋子分類
+  // 信用卡回饋方案
   let subRateHtml='';
   if(defPayment==='credit'&&defCardId) {
     const card=DB.cards.find(c=>c.id===defCardId);
     if(card?.subRates?.length) {
+      const autoSubRateId=card.subRates.map(s=>({s,info:getCardRebate(card,s.id,tripExps,e0?.id)})).filter(x=>x.info.remaining>0).sort((a,b)=>b.s.rate-a.s.rate)[0]?.s.id || card.subRates[0].id;
+      const activeSubRateId=_efSubRateId||defSubRateId||autoSubRateId;
+      _efSubRateId=activeSubRateId;
       subRateHtml=`
         <div style="margin-top:10px;padding-left:16px;border-left:2px solid var(--line-light)">
-          <div style="font-size:11px;color:var(--faint);margin-bottom:8px">回饋分類</div>
+          <div style="font-size:11px;color:var(--faint);margin-bottom:8px">回饋方案（點選套用這筆消費）</div>
           ${card.subRates.map(sub=>{
             const info=getCardRebate(card,sub.id,tripExps,e0?.id);
+            const isActive=activeSubRateId===sub.id;
             return `<button onclick="selectSubRate('${sub.id}')" id="ef-sub-${sub.id}"
-              style="display:flex;justify-content:space-between;width:100%;background:none;border:none;cursor:pointer;padding:8px 0;border-bottom:1px solid var(--line-light);font-family:inherit;text-align:left;opacity:${info.remaining<=0?.45:1}">
-              <span style="font-size:13px;font-weight:${defSubRateId===sub.id?700:400};color:${defSubRateId===sub.id?'var(--text)':'var(--sub)'}">${sub.name} · ${sub.rate}%</span>
+              style="display:flex;align-items:center;gap:10px;width:100%;background:${isActive?'var(--accent-light)':'none'};border:1.5px solid ${isActive?'var(--accent)':'var(--line-light)'};border-radius:10px;cursor:pointer;padding:9px 12px;margin-bottom:6px;font-family:inherit;text-align:left;opacity:${info.remaining<=0?.5:1}">
+              <span id="ef-sub-dot-${sub.id}" style="width:16px;height:16px;border-radius:999px;border:1.5px solid ${isActive?'var(--accent)':'var(--line)'};background:${isActive?'var(--accent)':'transparent'};flex-shrink:0;display:flex;align-items:center;justify-content:center">${isActive?`<span style="width:6px;height:6px;border-radius:999px;background:#fff"></span>`:''}</span>
+              <span style="flex:1;font-size:13px;font-weight:${isActive?700:500};color:${isActive?'var(--text)':'var(--sub)'}">${sub.name} · ${sub.rate}%</span>
               <span style="font-size:11px;color:${info.remaining<=0?'var(--red)':'var(--faint)'}">${info.remaining<=0?'額度已用完':`剩 NT$${fmtNum(info.remaining)}`}</span>
             </button>`;
           }).join('')}
-          ${defSubRateId&&defAmt?`
-          <div id="ef-rebate-preview" style="display:flex;justify-content:space-between;background:var(--accent-light);border-radius:999px;padding:8px 14px;margin-top:8px">
+          <div id="ef-rebate-preview" style="display:${activeSubRateId&&defAmt?'flex':'none'};justify-content:space-between;background:var(--accent-light);border-radius:999px;padding:8px 14px;margin-top:8px">
             <span style="font-size:12px;color:var(--accent);font-weight:600">這筆預估回饋</span>
-            <span style="font-size:16px;color:var(--accent);font-weight:700">NT$ ${fmtNum(calcRebate(DB.cards.find(c=>c.id===defCardId),defSubRateId,parseFloat(defAmt),rate,defCur,tripExps,e0?.id))}</span>
-          </div>`:''}
+            <span id="ef-rebate-amt" style="font-size:16px;color:var(--accent);font-weight:700">NT$ ${fmtNum(calcRebate(card,activeSubRateId,parseFloat(defAmt)||0,rate,defCur,tripExps,e0?.id))}</span>
+          </div>
         </div>`;
     }
   }
@@ -2291,6 +2299,7 @@ window.updateEfTwd=function(tripId) {
   const amt=parseFloat(document.getElementById('ef-amount')?.value)||0;
   const el=document.getElementById('ef-twd');
   if(el) el.textContent=amt&&cur!=='TWD'&&rate?`≈ NT$ ${fmtNum(amt*(rate||1))} · 匯率 ${fmtRate(rate)}`:rate?`匯率 ${fmtRate(rate)}`:'';
+  updateEfRebatePreview();
 };
 window.setEfCur=function(code,tripId) {
   _efCur=code;
@@ -2328,33 +2337,66 @@ window.selectEfCard=function(id) {
   _efCardId=id;
   document.querySelectorAll('[id^="ef-card-"]').forEach(b=>b.classList.toggle('active',b.id===`ef-card-${id}`));
   const card=DB.cards.find(c=>c.id===id);
-  const tripId=getActiveTrip()?.id;
+  const trip=editingExpId?DB.trips.find(t=>t.id===DB.expenses.find(e=>e.id===editingExpId)?.tripId):getCurrentTrip();
+  const tripId=trip?.id;
   const tripExps=DB.expenses.filter(e=>e.tripId===tripId);
   const editId=editingExpId;
+  const section=document.getElementById('ef-subrate-section');
   if(card?.subRates?.length) {
     const best=card.subRates.map(s=>({s,info:getCardRebate(card,s.id,tripExps,editId)})).filter(x=>x.info.remaining>0).sort((a,b)=>b.s.rate-a.s.rate)[0]||{s:card.subRates[0]};
     _efSubRateId=best.s.id;
-    document.getElementById('ef-subrate-section').innerHTML=`
-      <div style="margin-top:10px">
-        ${card.subRates.map(sub=>{
-          const info=getCardRebate(card,sub.id,tripExps,editId);
-          return `<button onclick="selectSubRate('${sub.id}')" id="ef-sub-${sub.id}"
-            style="display:flex;justify-content:space-between;width:100%;background:none;border:none;cursor:pointer;padding:8px 0;border-bottom:1px solid var(--line-light);font-family:inherit;text-align:left;opacity:${info.remaining<=0?.45:1}">
-            <span style="font-size:13px;font-weight:${_efSubRateId===sub.id?700:400};color:${_efSubRateId===sub.id?'var(--text)':'var(--sub)'}">${sub.name} · ${sub.rate}%</span>
-            <span style="font-size:11px;color:${info.remaining<=0?'var(--red)':'var(--faint)'}">${info.remaining<=0?'額度已用完':`剩 NT$${fmtNum(info.remaining)}`}</span>
-          </button>`;
-        }).join('')}
+    if(section) section.innerHTML=`
+      <div style="font-size:11px;color:var(--faint);margin-bottom:8px">回饋方案（點選套用這筆消費）</div>
+      ${card.subRates.map(sub=>{
+        const info=getCardRebate(card,sub.id,tripExps,editId);
+        const isActive=_efSubRateId===sub.id;
+        return `<button onclick="selectSubRate('${sub.id}')" id="ef-sub-${sub.id}"
+          style="display:flex;align-items:center;gap:10px;width:100%;background:${isActive?'var(--accent-light)':'none'};border:1.5px solid ${isActive?'var(--accent)':'var(--line-light)'};border-radius:10px;cursor:pointer;padding:9px 12px;margin-bottom:6px;font-family:inherit;text-align:left;opacity:${info.remaining<=0?.5:1}">
+          <span id="ef-sub-dot-${sub.id}" style="width:16px;height:16px;border-radius:999px;border:1.5px solid ${isActive?'var(--accent)':'var(--line)'};background:${isActive?'var(--accent)':'transparent'};flex-shrink:0;display:flex;align-items:center;justify-content:center">${isActive?`<span style="width:6px;height:6px;border-radius:999px;background:#fff"></span>`:''}</span>
+          <span style="flex:1;font-size:13px;font-weight:${isActive?700:500};color:${isActive?'var(--text)':'var(--sub)'}">${sub.name} · ${sub.rate}%</span>
+          <span style="font-size:11px;color:${info.remaining<=0?'var(--red)':'var(--faint)'}">${info.remaining<=0?'額度已用完':`剩 NT$${fmtNum(info.remaining)}`}</span>
+        </button>`;
+      }).join('')}
+      <div id="ef-rebate-preview" style="display:none;justify-content:space-between;background:var(--accent-light);border-radius:999px;padding:8px 14px;margin-top:8px">
+        <span style="font-size:12px;color:var(--accent);font-weight:600">這筆預估回饋</span>
+        <span id="ef-rebate-amt" style="font-size:16px;color:var(--accent);font-weight:700">NT$ 0</span>
       </div>`;
+    updateEfRebatePreview();
+  } else if(section) {
+    section.innerHTML='';
+    _efSubRateId=null;
   }
 };
 window.selectSubRate=function(id) {
   _efSubRateId=id;
   document.querySelectorAll('[id^="ef-sub-"]').forEach(b=>{
     const sid=b.id.replace('ef-sub-','');
-    const span=b.querySelector('span');
-    if(span){span.style.fontWeight=sid===id?700:400;span.style.color=sid===id?'var(--text)':'var(--sub)';}
+    const isActive=sid===id;
+    b.style.background=isActive?'var(--accent-light)':'none';
+    b.style.borderColor=isActive?'var(--accent)':'var(--line-light)';
+    const dot=document.getElementById(`ef-sub-dot-${sid}`);
+    if(dot){ dot.style.borderColor=isActive?'var(--accent)':'var(--line)'; dot.style.background=isActive?'var(--accent)':'transparent'; dot.innerHTML=isActive?`<span style="width:6px;height:6px;border-radius:999px;background:#fff"></span>`:''; }
+    const nameSpan=b.querySelector('span:nth-child(2)');
+    if(nameSpan){ nameSpan.style.fontWeight=isActive?700:500; nameSpan.style.color=isActive?'var(--text)':'var(--sub)'; }
   });
+  updateEfRebatePreview();
 };
+function updateEfRebatePreview() {
+  const trip=editingExpId?DB.trips.find(t=>t.id===DB.expenses.find(e=>e.id===editingExpId)?.tripId):getCurrentTrip();
+  const cardId=_efCardId||(editingExpId?DB.expenses.find(e=>e.id===editingExpId)?.cardId:null);
+  const card=DB.cards.find(c=>c.id===cardId);
+  const previewEl=document.getElementById('ef-rebate-preview');
+  const amtEl=document.getElementById('ef-rebate-amt');
+  if(!previewEl||!amtEl||!card||!_efSubRateId) return;
+  const amt=parseFloat(document.getElementById('ef-amount')?.value)||0;
+  if(!amt){ previewEl.style.display='none'; return; }
+  const rate=getRate(trip);
+  const cur=_efCur||(editingExpId?DB.expenses.find(e=>e.id===editingExpId)?.currency:trip?.currency)||trip?.currency;
+  const tripExps=DB.expenses.filter(e=>e.tripId===trip?.id);
+  previewEl.style.display='flex';
+  amtEl.textContent=`NT$ ${fmtNum(calcRebate(card,_efSubRateId,amt,rate,cur,tripExps,editingExpId))}`;
+}
+window.updateEfRebatePreview=updateEfRebatePreview;
 window.selectEfFund=function(id) {
   _efFundId=id;
   document.querySelectorAll('[id^="ef-fund-"]').forEach(b=>b.classList.toggle('active',b.id===`ef-fund-${id}`));
@@ -3038,10 +3080,10 @@ function renderCardForm(){
     </div>
     <div class="field-group"><label class="field-label">卡片名稱</label><input class="field-input" id="card-name" value="${card?.name||''}" placeholder="例：台新 Richart"></div>
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
-      <label class="field-label" style="margin:0">回饋分類</label>
-      <button style="background:none;border:none;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit" onclick="addSubRateRow()">+ 新增分類</button>
+      <label class="field-label" style="margin:0">回饋方案</label>
+      <button style="background:none;border:none;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit" onclick="addSubRateRow()">+ 新增方案</button>
     </div>
-    <div style="font-size:11px;color:var(--faint);margin-bottom:16px;line-height:1.6">每個回饋分類可設定回饋%、回饋金額上限(NT$)，以及出國前已使用的回饋額度(NT$)。</div>
+    <div style="font-size:11px;color:var(--faint);margin-bottom:16px;line-height:1.6">很多卡片會分月份/季節切換回饋方案，每個方案可各自設定回饋%、回饋金額上限(NT$)，以及出國前已使用的回饋額度(NT$)。記帳時可依當下適用的方案選擇。</div>
     <div id="subrate-rows">
       ${(card?.subRates||[]).map(sub=>buildSubRateRow(sub)).join('')}
     </div>
@@ -3052,12 +3094,12 @@ function renderCardForm(){
 
 function buildSubRateRow(sub){
   const rate=(sub.rate===0||sub.rate===''||sub.rate===undefined)?'':sub.rate;
-  const limit=sub.unlimited?'':(sub.limit===0||sub.limit===''||sub.limit===undefined)?'':sub.limit;
+  const limit=sub.unlimited?'':(sub.limit==null||sub.limit===0||sub.limit===''||sub.limit===undefined)?'':sub.limit;
   const used=(sub.used===0||sub.used===''||sub.used===undefined)?'':sub.used;
   const unlimited=sub.unlimited||false;
   return `<div id="sr-row-${sub.id}" style="margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--line-light)">
     <div style="display:flex;gap:8px;margin-bottom:12px">
-      <input class="field-input" id="sr-name-${sub.id}" value="${sub.name||''}" placeholder="分類名稱（例：海外消費）" style="flex:1;font-size:14px;font-weight:600">
+      <input class="field-input" id="sr-name-${sub.id}" value="${sub.name||''}" placeholder="方案名稱（例：海外消費）" style="flex:1;font-size:14px;font-weight:600">
       <button onclick="removeSubRateRow('${sub.id}')" style="background:none;border:none;cursor:pointer;color:var(--faint)">${ico('x',16)}</button>
     </div>
     <div style="display:flex;gap:20px;align-items:flex-end">
@@ -3117,7 +3159,7 @@ function submitCard(existingId){
       id, name:n,
       rate:parseFloat(document.getElementById(`sr-rate-${id}`)?.value)||0,
       unlimited:isUnlimited,
-      limit:isUnlimited?Infinity:(parseFloat(document.getElementById(`sr-limit-${id}`)?.value)||0),
+      limit:isUnlimited?Infinity:(parseFloat(document.getElementById(`sr-limit-${id}`)?.value)||null),
       used:parseFloat(document.getElementById(`sr-used-${id}`)?.value)||0,
     });
   });
