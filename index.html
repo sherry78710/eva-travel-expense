@@ -1012,7 +1012,6 @@ function renderTripList() {
           ${buildHomeAccordion(t.id,'cards','creditcard','攜帶的信用卡', (t.tripCards||[]).length?(t.tripCards||[]).length+'張':'未選', buildCardsAccordionBody(t))}
           ${buildHomeAccordion(t.id,'funds','wallet','公基金', (DB.funds||[]).filter(f=>f.tripId===t.id).length?(DB.funds||[]).filter(f=>f.tripId===t.id).length+'個':'未設定', buildFundsAccordionBody(t))}
           ${buildHomeAccordion(t.id,'budget','edit','預算', t.personalBudget?'已設定':'未設定', buildBudgetAccordionBody(t))}
-          ${buildHomeAccordion(t.id,'cats','box','分類管理', DB.categories.length+'個', `<div id="drag-cat-list">${buildDragCatList()}</div><div id="add-cat-section" style="margin-top:8px"><button class="btn-primary" style="background:var(--accent-light);color:var(--accent);border:1.5px solid var(--accent);padding:9px;font-size:12px" onclick="showAddCat()">+ 新增分類</button></div>`)}
 
           <button onclick="selectedTripId='${t.id}';switchTab('exp')" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:4px;font-size:12.5px;font-weight:700;color:var(--text);cursor:pointer;font-family:inherit">
             查看消費紀錄 <span style="color:var(--faint)">›</span>
@@ -2582,6 +2581,19 @@ function renderSettings() {
   const payeesList=DB.payees[0]?.items||[];
   el.innerHTML=`
     <div class="page-header"><div><div class="page-subtitle">SETTINGS</div><div class="page-title">設定</div></div></div>
+
+    <!-- 分類管理 -->
+    <div class="accordion">
+      <button class="accordion-header" onclick="toggleAccordion(this)">
+        <div class="accordion-title">${ico('box',18,'var(--sub)')} 分類管理</div>
+        <span class="accordion-chevron">${ico('chevdown',18)}</span>
+      </button>
+      <div class="accordion-body">
+        <div style="font-size:11px;color:var(--faint);margin-bottom:12px;line-height:1.6">所有旅程共用同一份分類，這裡調整會套用到全部旅程。</div>
+        <div id="drag-cat-list">${buildDragCatList()}</div>
+        <div id="add-cat-section" style="margin-top:8px"><button class="btn-primary" style="background:var(--accent-light);color:var(--accent);border:1.5px solid var(--accent);padding:9px;font-size:12px" onclick="showAddCat()">+ 新增分類</button></div>
+      </div>
+    </div>
 
     <!-- 信用卡管理 -->
     <div class="accordion">
