@@ -365,6 +365,7 @@ const ICONS = {
   car:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9L2.1 10.8c-.2.4-.3.8-.3 1.2V16c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>`,
   parking:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 17V7h4a3 3 0 0 1 0 6H9"/></svg>`,
   nail:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6"/><path d="M10 2v4.3a3 3 0 0 1-.5 1.6L7 12a4 4 0 0 0-1 2.6V18a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-3.4A4 4 0 0 0 17 12l-2.5-4.1a3 3 0 0 1-.5-1.6V2"/></svg>`,
+  search:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>`,
 };
 function ico(name, size=18, color='currentColor') {
   const svg = ICONS[name] || ICONS.box;
@@ -603,6 +604,7 @@ let currentTab='add';
 // 子頁面堆疊
 let navStack = { home:'list', settings:'main' };
 let selectedTripId=null, editingTripId=null;
+let expSearchQ='', expFilterCatId=null;
 let editingExpId=null, expandedPrefill=null, addSubView='quick';
 let settingsEditCardId=null, settingsEditFundId=null;
 
@@ -703,7 +705,7 @@ function renderTripList() {
 }
 
 function goCreateTrip() { navStack.home='create'; editingTripId=null; render(); }
-function openTrip(id) { selectedTripId=id; navStack.home='detail'; render(); }
+function openTrip(id) { selectedTripId=id; navStack.home='detail'; expSearchQ=''; expFilterCatId=null; render(); }
 window.goCreateTrip=goCreateTrip; window.openTrip=openTrip;
 
 // ============================================================
@@ -1198,13 +1200,37 @@ function renderTripDetail() {
       </div>`;
   }
 
-  // 時間軸
+  // 時間軸（套用搜尋/篩選）
+  const searchedExps=displayExps.filter(e=>{
+    if(expFilterCatId && e.categoryId!==expFilterCatId) return false;
+    if(expSearchQ){
+      const q=expSearchQ.toLowerCase();
+      const hit=(e.name||'').toLowerCase().includes(q)||(e.store||'').toLowerCase().includes(q)||(e.note||'').toLowerCase().includes(q);
+      if(!hit) return false;
+    }
+    return true;
+  });
+  const usedCatIds=[...new Set(displayExps.map(e=>e.categoryId))];
+  const filterCats=DB.categories.filter(c=>usedCatIds.includes(c.id));
+  const searchBarHtml=`
+    <div style="margin-bottom:16px">
+      <div style="position:relative;margin-bottom:${filterCats.length?'10px':'0'}">
+        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--faint);display:flex">${ico('search',15)}</span>
+        <input type="text" id="exp-search-input" placeholder="搜尋店名、品項、備註" value="${expSearchQ}"
+          oninput="expSearchQ=this.value;renderTripDetail();setTimeout(()=>{const el=document.getElementById('exp-search-input');if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}},0)"
+          style="width:100%;padding:10px 12px 10px 36px;border-radius:999px;border:1px solid var(--line);background:var(--card);font-size:13px;color:var(--text);font-family:inherit">
+      </div>
+      ${filterCats.length?`<div class="pill-row" style="flex-wrap:wrap">
+        ${filterCats.map(c=>`<button class="pill sm ${expFilterCatId===c.id?'active':''}" onclick="expFilterCatId=expFilterCatId==='${c.id}'?null:'${c.id}';renderTripDetail()">${c.name}</button>`).join('')}
+      </div>`:''}
+    </div>`;
+
   const grouped={};
-  displayExps.forEach(e=>{if(!grouped[e.date])grouped[e.date]=[];grouped[e.date].push(e);});
+  searchedExps.forEach(e=>{if(!grouped[e.date])grouped[e.date]=[];grouped[e.date].push(e);});
   const sortedDates=Object.keys(grouped).sort((a,b)=>b.localeCompare(a));
 
   const timelineHtml=sortedDates.length===0?
-    `<div class="empty-state"><div class="empty-title" style="font-size:14px">還沒有消費紀錄</div><div class="empty-sub">點底部「記帳」新增第一筆消費</div></div>`:
+    `<div class="empty-state"><div class="empty-title" style="font-size:14px">${expSearchQ||expFilterCatId?'找不到符合的消費紀錄':'還沒有消費紀錄'}</div><div class="empty-sub">${expSearchQ||expFilterCatId?'試試看別的關鍵字或清除篩選':'點底部「記帳」新增第一筆消費'}</div></div>`:
     sortedDates.map(date=>{
       const items=grouped[date].sort((a,b)=>(b.time||'').localeCompare(a.time||''));
       const dayTotal=items.reduce((s,e)=>s+(e.twdAmount||0),0);
@@ -1285,6 +1311,7 @@ function renderTripDetail() {
     </div>
 
     ${budgetHtml}
+    ${searchBarHtml}
     ${timelineHtml}`;
 }
 
@@ -1478,22 +1505,130 @@ function renderScan() {
       <button class="pill active" id="scan-receipt" onclick="setScanMode('receipt')">收據</button>
       <button class="pill" id="scan-transit" onclick="setScanMode('transit')">交通卡</button>
     </div>
-    <div style="text-align:center;padding:40px 0">
+    <div style="text-align:center;padding:40px 0" id="scan-body">
       <div style="width:56px;height:56px;border-radius:50%;border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;margin:0 auto 20px">${ico('x',24,'var(--sub)')}</div>
       <div style="font-size:15px;font-weight:700;margin-bottom:4px" id="scan-title">拍照或上傳收據圖片</div>
-      <div style="font-size:12px;color:var(--faint);margin-bottom:28px" id="scan-sub">AI 自動辨識並翻譯成中文</div>
+      <div style="font-size:12px;color:var(--faint);margin-bottom:28px" id="scan-sub">自動辨識文字，猜出金額和店名帶入記帳表單</div>
       <div style="display:flex;gap:12px;justify-content:center">
-        <button class="btn-primary" style="width:auto;padding:12px 28px" onclick="showToast('OCR功能即將上線')">拍照</button>
-        <button class="btn-outline" style="width:auto;padding:12px 28px">上傳圖片</button>
+        <button class="btn-primary" style="width:auto;padding:12px 28px" onclick="document.getElementById('scan-file-camera').click()">拍照</button>
+        <button class="btn-outline" style="width:auto;padding:12px 28px" onclick="document.getElementById('scan-file-upload').click()">上傳圖片</button>
       </div>
+      <input type="file" accept="image/*" capture="environment" id="scan-file-camera" style="display:none" onchange="handleScanFile(this)">
+      <input type="file" accept="image/*" id="scan-file-upload" style="display:none" onchange="handleScanFile(this)">
     </div>`;
 }
 window.setScanMode=function(mode){
   document.getElementById('scan-receipt').classList.toggle('active',mode==='receipt');
   document.getElementById('scan-transit').classList.toggle('active',mode==='transit');
   document.getElementById('scan-title').textContent=mode==='receipt'?'拍照或上傳收據圖片':'上傳交通卡交易截圖';
-  document.getElementById('scan-sub').textContent=mode==='receipt'?'AI 自動辨識並翻譯成中文':'請截取「最新交易記錄」畫面';
+  document.getElementById('scan-sub').textContent=mode==='receipt'?'自動辨識文字，猜出金額和店名帶入記帳表單':'請截取「最新交易記錄」畫面';
 };
+
+function fileToBase64(file) {
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>res(r.result);
+    r.onerror=rej;
+    r.readAsDataURL(file);
+  });
+}
+
+async function handleScanFile(inputEl) {
+  const file=inputEl.files?.[0];
+  if(!file) return;
+  const key=lsGet('ocrApiKey','');
+  if(!key) {
+    showToast('請先到「設定」→「掃描辨識設定」填入 OCR API Key');
+    return;
+  }
+  const body=document.getElementById('scan-body');
+  const origHtml=body.innerHTML;
+  body.innerHTML=`<div style="padding:60px 0;font-size:13px;color:var(--faint)">辨識中，請稍候…</div>`;
+
+  try {
+    const base64=await fileToBase64(file);
+    const trip=DB.trips.find(t=>t.id===selectedTripId)||DB.trips.find(t=>t.status==='active');
+    const lang=trip?.currency==='KRW'?'kor':trip?.currency==='JPY'?'jpn':'eng';
+
+    const form=new URLSearchParams();
+    form.append('apikey', key);
+    form.append('base64Image', base64);
+    form.append('language', lang);
+    form.append('OCREngine', '2');
+    form.append('scale', 'true');
+    form.append('detectOrientation', 'true');
+
+    const res=await fetch('https://api.ocr.space/parse/image', { method:'POST', body:form });
+    const data=await res.json();
+    if(data.IsErroredOnProcessing || !data.ParsedResults?.length) {
+      throw new Error(data.ErrorMessage?.[0] || '辨識失敗');
+    }
+    const text=data.ParsedResults[0].ParsedText || '';
+    const guess=parseReceiptText(text);
+
+    if(!guess.amount) {
+      showToast('辨識完成，但抓不到金額，請手動輸入');
+    } else {
+      showToast(`辨識完成：${guess.name||'（未抓到店名）'} ${fmtNum(guess.amount)}`);
+    }
+
+    const rate=trip?getRate(trip):null;
+    expandedPrefill={
+      amount:guess.amount||'',
+      currency:trip?.currency||'TWD',
+      twdAmount:guess.amount?(rate?guess.amount*rate:guess.amount):0,
+      name:guess.name||'',
+      categoryId:guessCategoryIdFromText(guess.name),
+      payment:null,
+      cardId:null,
+    };
+    editingExpId=null; addSubView='form';
+    switchTab('add');
+  } catch(err) {
+    body.innerHTML=origHtml;
+    showToast('辨識失敗：'+(err.message||'請檢查網路連線或 API Key'));
+  }
+}
+window.handleScanFile=handleScanFile;
+
+// 依店名文字猜分類（沿用新增分類時的關鍵字比對規則）
+function guessCategoryIdFromText(name) {
+  const iconGuess=guessCategoryIcon(name);
+  const cat=DB.categories.find(c=>c.icon===iconGuess);
+  return cat?.id||DB.categories[0]?.id;
+}
+
+// 從 OCR 辨識出的原始文字裡，粗略猜出金額與店名
+// 金額：抓文字裡所有像數字的片段，取最大的一個當作總金額（收據總額通常是最大數字，不是完美規則但堪用）
+// 店名：抓第一行非空白文字
+function parseReceiptText(text) {
+  const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  const name=lines[0]||'';
+  const numRe=/\d{1,3}(?:[,，]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g;
+
+  // 第一步：優先找「合計/總額/total」這類關鍵字所在的那一行，排除「收現/找零/change」這種容易誤判的行
+  const totalKeywords=['합계','총액','total','合計','總計','금액','應付','消費金額'];
+  const excludeKeywords=['받은금액','거스름돈','잔돈','change','받은','找零','找零金額'];
+  for(const line of lines) {
+    const lower=line.toLowerCase();
+    if(excludeKeywords.some(k=>lower.includes(k.toLowerCase()))) continue;
+    if(totalKeywords.some(k=>lower.includes(k.toLowerCase()))) {
+      const m=line.match(numRe);
+      if(m?.length) {
+        const n=parseFloat(m[m.length-1].replace(/[,，]/g,''));
+        if(!isNaN(n) && n>=10) return {amount:n, name};
+      }
+    }
+  }
+
+  // 第二步：都比對不到關鍵字，退回「文字裡最大的數字」當作猜測（排除太小或太大的誤判值）
+  const numMatches=text.match(numRe)||[];
+  const nums=numMatches
+    .map(s=>parseFloat(s.replace(/[,，]/g,'')))
+    .filter(n=>!isNaN(n) && n>=10 && n<10000000);
+  const amount=nums.length?Math.max(...nums):null;
+  return {amount, name};
+}
 
 // ============================================================
 // 記帳頁
@@ -2285,6 +2420,23 @@ function renderSettings() {
       </div>
     </div>
 
+    <!-- 掃描辨識設定 -->
+    <div class="accordion">
+      <button class="accordion-header" onclick="toggleAccordion(this)">
+        <div class="accordion-title">${ico('search',18,'var(--sub)')} 掃描辨識設定</div>
+        <span class="accordion-chevron">${ico('chevdown',18)}</span>
+      </button>
+      <div class="accordion-body">
+        <div style="font-size:11px;color:var(--faint);margin-bottom:12px;line-height:1.6">
+          掃描收據功能使用 OCR.space 的免費文字辨識服務，需要一組免費 API Key（不需信用卡）。
+          <a href="https://ocr.space/ocrapi/freekey" target="_blank" style="color:var(--accent)">點此免費申請 →</a>
+        </div>
+        <div class="field-label">OCR API Key</div>
+        <input class="field-input" id="ocr-key-input" placeholder="貼上你的 OCR.space API Key" value="${lsGet('ocrApiKey','')}" style="margin-bottom:10px">
+        <button class="btn-outline" style="width:auto;padding:8px 14px" onclick="saveOcrKey()">儲存</button>
+      </div>
+    </div>
+
     <!-- 代購對象 -->
     <div class="accordion">
       <button class="accordion-header" onclick="toggleAccordion(this)">
@@ -2690,6 +2842,13 @@ function deleteCatConfirm(id,name){
   },true);
 }
 window.deleteCatConfirm=deleteCatConfirm;
+
+function saveOcrKey(){
+  const v=document.getElementById('ocr-key-input')?.value.trim();
+  lsSet('ocrApiKey', v||'');
+  showToast(v?'OCR API Key 已儲存':'已清空 OCR API Key');
+}
+window.saveOcrKey=saveOcrKey;
 
 function addPayee(){
   const name=document.getElementById('new-payee')?.value.trim();
