@@ -2652,26 +2652,13 @@ function renderSettings() {
   el.innerHTML=`
     <div class="page-header"><div><div class="page-subtitle">SETTINGS</div><div class="page-title">設定</div></div></div>
 
-    <!-- 分類管理 -->
-    <div class="accordion">
-      <button class="accordion-header" onclick="toggleAccordion(this)">
-        <div class="accordion-title">${ico('box',18,'var(--sub)')} 分類管理</div>
-        <span class="accordion-chevron">${ico('chevdown',18)}</span>
-      </button>
-      <div class="accordion-body">
-        <div style="font-size:11px;color:var(--faint);margin-bottom:12px;line-height:1.6">所有旅程共用同一份分類，這裡調整會套用到全部旅程。</div>
-        <div id="drag-cat-list">${buildDragCatList()}</div>
-        <div id="add-cat-section" style="margin-top:8px"><button class="btn-primary" style="background:var(--accent-light);color:var(--accent);border:1.5px solid var(--accent);padding:9px;font-size:12px" onclick="showAddCat()">+ 新增分類</button></div>
-      </div>
-    </div>
-
     <!-- 信用卡管理 -->
     <div class="accordion">
       <button class="accordion-header" onclick="toggleAccordion(this)">
         <div class="accordion-title">${ico('wallet',18,'var(--sub)')} 信用卡管理</div>
-        <span class="accordion-chevron open">${ico('chevdown',18)}</span>
+        <span class="accordion-chevron">${ico('chevdown',18)}</span>
       </button>
-      <div class="accordion-body open">
+      <div class="accordion-body">
         ${DB.cards.length===0?`<div style="font-size:12px;color:var(--faint);margin-bottom:12px">尚未新增信用卡</div>`:`
         ${DB.cards.map(card=>`
           <div class="list-row" style="cursor:pointer" onclick="editCard('${card.id}')">
@@ -2682,6 +2669,19 @@ function renderSettings() {
             ${ico('forward',16,'var(--faint)')}
           </div>`).join('')}`}
         <button class="btn-primary" style="background:var(--accent-light);color:var(--accent);border:1.5px solid var(--accent);margin-top:8px" onclick="navStack.settings='add-card';settingsEditCardId=null;render()">+ 新增信用卡</button>
+      </div>
+    </div>
+
+    <!-- 分類管理 -->
+    <div class="accordion">
+      <button class="accordion-header" onclick="toggleAccordion(this)">
+        <div class="accordion-title">${ico('box',18,'var(--sub)')} 分類管理</div>
+        <span class="accordion-chevron">${ico('chevdown',18)}</span>
+      </button>
+      <div class="accordion-body">
+        <div style="font-size:11px;color:var(--faint);margin-bottom:12px;line-height:1.6">所有旅程共用同一份分類，這裡調整會套用到全部旅程。</div>
+        <div id="drag-cat-list">${buildDragCatList()}</div>
+        <div id="add-cat-section" style="margin-top:8px"><button class="btn-primary" style="background:var(--accent-light);color:var(--accent);border:1.5px solid var(--accent);padding:9px;font-size:12px" onclick="showAddCat()">+ 新增分類</button></div>
       </div>
     </div>
 
