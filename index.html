@@ -387,7 +387,10 @@ let _uid = 0;
 function uid(p='id') { return `${p}_${Date.now()}_${++_uid}`; }
 function fmtNum(n) { if(n==null||isNaN(n)) return '0'; return Math.round(n).toLocaleString('en-US'); }
 function fmtRate(n) { if(!n) return '—'; return parseFloat(n).toFixed(4); }
-function todayISO() { return new Date().toISOString().slice(0,10); }
+function todayISO() {
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 function nowTime() { const d=new Date(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
 function getCur(code) { return CURRENCIES.find(c=>c.code===code)||{code,name:'',flag:''}; }
 function getRate(trip) { return trip?.lockedRate ?? trip?.currentRate ?? null; }
@@ -1694,7 +1697,7 @@ async function autoFetchRate(tripId, silent=false) {
     const rate = await fetchRateFromAPI(trip.currency);
     // 快取今天已抓過，避免同一天重複打 API
     try { localStorage.setItem(rateCacheKey(trip.currency), String(rate)); } catch(e){}
-    DB.trips = DB.trips.map(t=>t.id===tripId?{...t, currentRate:rate, rateSource:'auto', rateFetchedAt:new Date().toISOString()}:t);
+    DB.trips = DB.trips.map(t=>t.id===tripId?{...t, currentRate:rate, rateSource:'auto', rateFetchedAt:todayISO()}:t);
     save('trips');
     if (!silent) showToast(`已自動抓取匯率：1 ${trip.currency} ≈ TWD ${fmtRate(rate)}`);
     reRenderAfterRateChange(tripId);
@@ -1712,13 +1715,18 @@ function reRenderAfterRateChange(tripId) {
   render();
 }
 
-// 進入明細頁時，若尚未設定匯率，靜默嘗試自動抓取一次（同一旅程同一天只嘗試一次）
+// 進入明細頁時，若尚未設定匯率，靜默嘗試自動抓取一次；若匯率是「自動抓取」的，
+// 且不是今天抓的，也會靜默重新抓一次最新匯率（同一旅程同一天只嘗試一次）
 function maybeAutoFetchOnOpen(trip) {
   if (!trip || trip.status!=='active' || trip.lockedRate) return;
   const key = trip.id + '_' + todayISO();
   if (_autoFetchedKey.has(key)) return;
   _autoFetchedKey.add(key);
-  if (trip.currentRate) return; // 已有匯率（手動或先前自動抓取過）就不主動打擾
+  if (trip.currentRate) {
+    // 手動輸入的匯率永遠不會被自動覆蓋；自動抓取的匯率則每天重抓一次
+    if (trip.rateSource!=='auto') return;
+    if (trip.rateFetchedAt===todayISO()) return; // 今天已經抓過了
+  }
   // 先看今天是否已經快取過這個幣別的匯率，有的話直接用，不必打 API
   try {
     const cached = localStorage.getItem(rateCacheKey(trip.currency));
