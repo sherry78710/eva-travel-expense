@@ -874,17 +874,6 @@ function updateTripField(tripId, field, value) {
 }
 window.updateTripField=updateTripField;
 
-function saveTripBudget(tripId) {
-  const personalBudget=document.getElementById(`tf-personalbudget-${tripId}`)?.value;
-  const dailyBudget=document.getElementById(`tf-dailybudget-${tripId}`)?.value;
-  DB.trips=DB.trips.map(t=>t.id===tripId?{...t,personalBudget:personalBudget?parseFloat(personalBudget):null,dailyBudget:dailyBudget?parseFloat(dailyBudget):null}:t);
-  save('trips');
-  showToast('預算已儲存');
-  const badge=document.getElementById(`budget_${tripId}-badge`);
-  if(badge) badge.textContent=personalBudget?'已設定':'未設定';
-}
-window.saveTripBudget=saveTripBudget;
-
 // 通用手風琴外框（key 要帶 tripId 確保多張卡片同時展開時 id 不衝突）
 function buildHomeAccordion(tripId, key, iconName, title, badge, bodyHtml) {
   const accId=`${key}_${tripId}`;
@@ -938,18 +927,88 @@ function buildFundsAccordionBody(trip) {
     <button class="btn-outline" onclick="_fundFormTripHint='${trip.id}';navStack.settings='add-fund';settingsEditFundId=null;switchTab('settings')" style="margin-top:10px;padding:9px;font-size:12px">+ 新增公基金</button>`;
 }
 
-function buildBudgetAccordionBody(trip) {
+// 攜帶現金：手動金額 + 換匯（換匯只會增加現金餘額，不計入消費統計）
+function buildCashAccordionBody(trip) {
+  const cur=getCur(trip.currency);
+  const cashAmt=trip.cashAmount||0;
+  const cashSpent=DB.expenses.filter(e=>e.tripId===trip.id&&e.payment==='cash'&&e.currency===trip.currency).reduce((s,e)=>s+e.amount,0);
+  const cashLeft=cashAmt-cashSpent;
+  const exchanges=trip.cashExchanges||[];
+  const exOpen=_accOpenState[`exform_${trip.id}`];
   return `
+    ${cashAmt>0?`
+    <div style="display:flex;justify-content:space-between;background:var(--card);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+      <div style="flex:1;text-align:center"><div style="font-size:10px;color:var(--faint);margin-bottom:4px">攜帶</div><div style="font-size:14px;font-weight:700">${cur.code} ${fmtNum(cashAmt)}</div></div>
+      <div style="width:1px;background:var(--line)"></div>
+      <div style="flex:1;text-align:center"><div style="font-size:10px;color:var(--faint);margin-bottom:4px">已花</div><div style="font-size:14px;font-weight:700">${cur.code} ${fmtNum(cashSpent)}</div></div>
+      <div style="width:1px;background:var(--line)"></div>
+      <div style="flex:1;text-align:center"><div style="font-size:10px;color:var(--faint);margin-bottom:4px">剩餘</div><div style="font-size:14px;font-weight:700;color:var(--green)">${cur.code} ${fmtNum(cashLeft)}</div></div>
+    </div>`:''}
     <div style="margin-bottom:10px">
-      <div style="font-size:10px;color:var(--faint);margin-bottom:4px">個人總預算（TWD）</div>
-      <input class="field-input" type="number" inputmode="decimal" id="tf-personalbudget-${trip.id}" value="${trip.personalBudget||''}" placeholder="例：70000" style="font-size:13px">
+      <div style="font-size:10px;color:var(--faint);margin-bottom:4px">攜帶現金金額（${cur.code}）</div>
+      <input class="field-input" type="number" inputmode="decimal" id="tf-cashamount-${trip.id}" value="${trip.cashAmount||''}" placeholder="例：500000" style="font-size:13px">
     </div>
-    <div style="margin-bottom:10px">
-      <div style="font-size:10px;color:var(--faint);margin-bottom:4px">每日預算（留空自動計算）</div>
-      <input class="field-input" type="number" inputmode="decimal" id="tf-dailybudget-${trip.id}" value="${trip.dailyBudget||''}" placeholder="自動計算" style="font-size:13px">
+    <button class="btn-outline" onclick="saveTripCash('${trip.id}')" style="padding:8px;font-size:12px">儲存</button>
+
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line-light)">
+      <button onclick="toggleCreateAcc('exform_${trip.id}')" style="display:flex;align-items:center;gap:6px;background:none;border:none;padding:0;cursor:pointer;font-family:inherit;color:var(--accent);font-size:12px;font-weight:700">
+        ${ico('exchange',14)} 記一筆換匯
+      </button>
+      <div id="exform_${trip.id}-acc-body" style="display:${exOpen?'block':'none'};margin-top:10px">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--faint);margin-bottom:4px">換出（TWD）</div>
+            <input class="field-input" type="number" inputmode="decimal" id="tf-exout-${trip.id}" placeholder="例：10000" style="font-size:13px">
+          </div>
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--faint);margin-bottom:4px">換入（${cur.code}）</div>
+            <input class="field-input" type="number" inputmode="decimal" id="tf-exin-${trip.id}" placeholder="例：430000" style="font-size:13px">
+          </div>
+        </div>
+        <button class="btn-outline" onclick="addTripExchange('${trip.id}')" style="padding:8px;font-size:12px">確認換匯（加到攜帶現金）</button>
+      </div>
     </div>
-    <button class="btn-outline" onclick="saveTripBudget('${trip.id}')" style="padding:8px;font-size:12px">儲存</button>`;
+
+    ${exchanges.length?`
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line-light)">
+      <div style="font-size:10px;color:var(--faint);margin-bottom:6px">換匯紀錄</div>
+      ${exchanges.slice().reverse().map(ex=>`
+        <div style="display:flex;justify-content:space-between;font-size:12px;padding:5px 0;color:var(--sub)">
+          <span>${ex.date} · TWD ${fmtNum(ex.twdOut)} → ${cur.code} ${fmtNum(ex.foreignIn)}</span>
+          <span style="color:var(--faint)">1≈${(ex.foreignIn/ex.twdOut).toFixed(4)}</span>
+        </div>`).join('')}
+    </div>`:''}`;
 }
+
+function saveTripCash(tripId) {
+  const val=document.getElementById(`tf-cashamount-${tripId}`)?.value;
+  const amount=val?parseFloat(val):null;
+  DB.trips=DB.trips.map(t=>t.id===tripId?{...t,cashAmount:amount}:t);
+  save('trips');
+  showToast('攜帶現金已儲存');
+  const trip=DB.trips.find(t=>t.id===tripId);
+  const cur=getCur(trip.currency);
+  const badge=document.getElementById(`cash_${tripId}-badge`);
+  if(badge) badge.textContent=amount?`${cur.code} ${fmtNum(amount)}`:'未設定';
+  renderTripList();
+}
+window.saveTripCash=saveTripCash;
+
+// 換匯：只增加「攜帶現金」餘額，不建立消費紀錄、不影響統計
+function addTripExchange(tripId) {
+  const twdOut=parseFloat(document.getElementById(`tf-exout-${tripId}`)?.value);
+  const foreignIn=parseFloat(document.getElementById(`tf-exin-${tripId}`)?.value);
+  if(!twdOut||!foreignIn){showToast('請輸入換出與換入金額');return;}
+  DB.trips=DB.trips.map(t=>{
+    if(t.id!==tripId) return t;
+    const record={id:uid('ex'),date:todayISO(),twdOut,foreignIn};
+    return {...t,cashAmount:(t.cashAmount||0)+foreignIn,cashExchanges:[...(t.cashExchanges||[]),record]};
+  });
+  save('trips');
+  showToast('已加到攜帶現金');
+  renderTripList();
+}
+window.addTripExchange=addTripExchange;
 
 function renderTripList() {
   const el=document.getElementById('page-home');
@@ -1010,8 +1069,8 @@ function renderTripList() {
 
           ${buildHomeAccordion(t.id,'rate','refresh','旅程匯率', getRate(t)?`1≈${fmtRate(getRate(t))}`:'未設定', buildRateAccordionBody(t))}
           ${buildHomeAccordion(t.id,'cards','creditcard','攜帶的信用卡', (t.tripCards||[]).length?(t.tripCards||[]).length+'張':'未選', buildCardsAccordionBody(t))}
+          ${buildHomeAccordion(t.id,'cash','banknote','攜帶現金', t.cashAmount?`${cur.code} ${fmtNum(t.cashAmount)}`:'未設定', buildCashAccordionBody(t))}
           ${buildHomeAccordion(t.id,'funds','wallet','公基金', (DB.funds||[]).filter(f=>f.tripId===t.id).length?(DB.funds||[]).filter(f=>f.tripId===t.id).length+'個':'未設定', buildFundsAccordionBody(t))}
-          ${buildHomeAccordion(t.id,'budget','edit','預算', t.personalBudget?'已設定':'未設定', buildBudgetAccordionBody(t))}
 
           <button onclick="selectedTripId='${t.id}';switchTab('exp')" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:4px;font-size:12.5px;font-weight:700;color:var(--text);cursor:pointer;font-family:inherit">
             查看消費紀錄 <span style="color:var(--faint)">›</span>
@@ -1358,11 +1417,10 @@ function submitTrip() {
     settleCurrency:'TWD',
     currentRate:null,
     tripBudget:null,
-    personalBudget:null,
-    dailyBudget:null,
     tripCards:[],
     extraCards:[],
     cashAmount:null,
+    cashExchanges:[],
     status:'active',
     lockedRate:null,
   };
@@ -1446,28 +1504,8 @@ function renderExpList() {
   const tripFunds=(DB.funds||[]).filter(f=>f.tripId===trip.id);
   const fundRemaining=tripFunds.reduce((s,f)=>s+getFundInfo(f,tripExps,null).remaining,0);
   const todaySpentTwd=personalExps.filter(e=>e.date===today).reduce((s,e)=>s+(e.twdAmount||0),0);
-
-  // 預算（統一以台幣計算，避免混幣別旅程加總失真）
-  let budgetHtml='';
-  if(trip.personalBudget) {
-    const days=Math.max(1,daysBetween(trip.startDate,trip.endDate));
-    const daily=trip.dailyBudget||(trip.personalBudget/days);
-    const used=personalExps.reduce((s,e)=>s+(e.twdAmount||0),0);
-    const pct=Math.min(100,(used/trip.personalBudget)*100);
-    const dailyRem=daily-todaySpentTwd;
-    budgetHtml=`
-      <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line-light)">
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-          <span style="font-size:12px;font-weight:600;color:var(--sub)">個人預算</span>
-          <span style="font-size:12px;color:var(--faint)">NT$ ${fmtNum(used)} / ${fmtNum(trip.personalBudget)}</span>
-        </div>
-        <div class="progress-bar"><div class="progress-fill ${used>trip.personalBudget?'danger':''}" style="width:${pct}%"></div></div>
-        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--faint)">
-          <span>每日預算 NT$ ${fmtNum(daily)}</span>
-          <span style="color:${dailyRem<0?'var(--red)':'var(--green)'};font-weight:600">${dailyRem>=0?'今日剩餘':'今日超支'} NT$ ${fmtNum(Math.abs(dailyRem))}</span>
-        </div>
-      </div>`;
-  }
+  const cashSpentTotal=DB.expenses.filter(e=>e.tripId===trip.id&&e.payment==='cash'&&e.currency===trip.currency).reduce((s,e)=>s+e.amount,0);
+  const cashRemaining=(trip.cashAmount||0)-cashSpentTotal;
 
   const searchedExps=displayExps.filter(e=>{
     if(expFilterCatId && e.categoryId!==expFilterCatId) return false;
@@ -1559,9 +1597,8 @@ function renderExpList() {
     <!-- 幣別明細（合併一行） -->
     ${curCodes.length?`<div style="font-size:12.5px;color:var(--sub);margin-bottom:14px">${curLinesHtml}</div>`:''}
 
+    ${trip.cashAmount?`<div style="font-size:13px;color:var(--sub);margin-bottom:4px">攜帶現金剩餘 ${cur.code} ${fmtNum(cashRemaining)}</div>`:''}
     ${tripFunds.length?`<div style="font-size:13px;color:var(--sub);margin-bottom:14px">公基金剩餘 ${cur.code} ${fmtNum(fundRemaining)}</div>`:''}
-
-    ${budgetHtml}
 
     <div style="position:-webkit-sticky;position:sticky;top:0;background:var(--bg);z-index:9;padding-bottom:8px">
       <div style="display:flex;align-items:center;gap:8px;border-top:1px solid var(--line-light);padding-top:14px">
