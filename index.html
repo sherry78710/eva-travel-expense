@@ -1237,6 +1237,7 @@ function renderTripDetail() {
                     </div>
                     <div style="font-size:11px;color:var(--faint);margin-top:2px;display:flex;align-items:center;gap:4px">
                       ${cat?`<span style="width:12px;height:12px;display:inline-flex">${ico(cat.icon,12)}</span>${cat.name}`:''}
+                      ${e.payment==='credit'&&e.cardId?` · ${DB.cards.find(c=>c.id===e.cardId)?.name||''}`:''}
                       ${e.store?` · ${e.store}`:''}
                       ${e.rateAtRecord?` · 匯率 ${fmtRate(e.rateAtRecord)}`:''}
                     </div>
@@ -2133,9 +2134,9 @@ function renderStats() {
   const payeesList=DB.payees[0]?.items||DB.payees||[];
   const tripFunds=(DB.funds||[]).filter(f=>f.tripId===trip.id);
 
-  // 類別
+  // 類別（統一以台幣計算，避免混幣別旅程加總失真）
   const catMap={};
-  personalExps.forEach(e=>{catMap[e.categoryId]=(catMap[e.categoryId]||0)+(e.amount||0);});
+  personalExps.forEach(e=>{catMap[e.categoryId]=(catMap[e.categoryId]||0)+(e.twdAmount||0);});
   const totalAmt=Object.values(catMap).reduce((s,v)=>s+v,0);
   const catRows=Object.entries(catMap).map(([id,total])=>({cat:DB.categories.find(c=>c.id===id),total,pct:totalAmt?(total/totalAmt)*100:0}))
     .filter(x=>x.cat).sort((a,b)=>b.total-a.total);
@@ -2171,7 +2172,7 @@ function renderStats() {
           <div style="flex:1">
             <div style="display:flex;justify-content:space-between;margin-bottom:5px">
               <span style="font-size:14px;font-weight:600">${cat.name}</span>
-              <span style="font-size:14px;font-weight:700">${cur.code} ${fmtNum(total)}</span>
+              <span style="font-size:14px;font-weight:700">NT$ ${fmtNum(total)}</span>
             </div>
             <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
           </div>
