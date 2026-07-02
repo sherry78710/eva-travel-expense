@@ -2397,7 +2397,7 @@ window.deleteExpConfirm=deleteExpConfirm;
 // ============================================================
 function renderStats() {
   const el=document.getElementById('page-stats');
-  const trip=DB.trips.find(t=>t.id===selectedTripId)||DB.trips.find(t=>t.status==='active')||DB.trips[0];
+  const trip=getCurrentTrip()||DB.trips.find(t=>t.id===selectedTripId)||DB.trips[0];
   if(!trip){
     el.innerHTML=`<div class="page-header"><div><div class="page-subtitle">STATISTICS</div><div class="page-title">統計</div></div></div><div class="empty-state"><div class="empty-title">尚未選擇旅程</div></div>`;
     return;
