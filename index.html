@@ -788,7 +788,7 @@ let currentTab='add';
 // 子頁面堆疊
 let navStack = { home:'list', settings:'main' };
 let selectedTripId=null, editingTripId=null;
-let expSearchQ='', expFilterCatId=null, expFilterPayment=null, expFilterPurchase=false, _expFilterOpen=false;
+let expSearchQ='', expFilterCatId=null, expFilterPayment=null, expFilterPurchase=false, _expFilterOpen=false, _expTotalOpen=false;
 let editingExpId=null, expandedPrefill=null, addSubView='quick';
 let settingsEditCardId=null, settingsEditFundId=null;
 
@@ -1112,7 +1112,7 @@ function renderTripList() {
 }
 
 function goCreateTrip() { navStack.home='create'; render(); }
-function openTrip(id) { selectedTripId=id; expSearchQ=''; expFilterCatId=null; expFilterPayment=null; expFilterPurchase=false; _expFilterOpen=false; switchTab('exp'); }
+function openTrip(id) { selectedTripId=id; expSearchQ=''; expFilterCatId=null; expFilterPayment=null; expFilterPurchase=false; _expFilterOpen=false; _expTotalOpen=false; switchTab('exp'); }
 window.goCreateTrip=goCreateTrip; window.openTrip=openTrip;
 
 // ============================================================
@@ -1464,7 +1464,6 @@ function renderExpList() {
     return;
   }
   const cur=getCur(trip.currency);
-  const rate=getRate(trip);
   maybeAutoFetchOnOpen(trip);
   const tripExps=DB.expenses.filter(e=>e.tripId===trip.id);
   const personalExps=tripExps.filter(e=>!e.isPurchaseFor);
@@ -1506,9 +1505,11 @@ function renderExpList() {
   },0);
   const tripFunds=(DB.funds||[]).filter(f=>f.tripId===trip.id);
   const fundRemaining=tripFunds.reduce((s,f)=>s+getFundInfo(f,tripExps,null).remaining,0);
+  const hasGroupFeature=tripFunds.length>0||tripExps.some(e=>e.isPurchaseFor);
   const todaySpentTwd=personalExps.filter(e=>e.date===today).reduce((s,e)=>s+(e.twdAmount||0),0);
   const cashSpentTotal=DB.expenses.filter(e=>e.tripId===trip.id&&e.payment==='cash'&&e.currency===trip.currency).reduce((s,e)=>s+e.amount,0);
   const cashRemaining=(trip.cashAmount||0)-cashSpentTotal;
+  const showCashChip=!!trip.cashAmount;
 
   const searchedExps=displayExps.filter(e=>{
     if(expFilterCatId && e.categoryId!==expFilterCatId) return false;
@@ -1575,35 +1576,45 @@ function renderExpList() {
     }).join('');
 
   el.innerHTML=`
-    <div class="page-header" style="padding-bottom:8px">
-      <div><div class="page-subtitle">DETAILS</div><div class="page-title">${trip.name}</div></div>
-    </div>
+    <div style="position:-webkit-sticky;position:sticky;top:0;background:var(--bg);z-index:10;padding-top:20px;padding-bottom:8px">
+      <div style="margin-bottom:14px">
+        <div style="font-size:11px;color:var(--faint);letter-spacing:.12em;font-weight:700;margin-bottom:2px">DETAILS</div>
+        <div style="font-size:19px;font-weight:700">${trip.name}</div>
+      </div>
 
-    <!-- 匯率（精簡為一行） -->
-    <div style="font-size:12px;color:${rate?'var(--faint)':'var(--accent)'};margin-bottom:14px">
-      ${rate?`${trip.currency} 1 ≈ TWD ${fmtRate(rate)}`:`匯率未設定，前往首頁旅程卡片設定`}
-    </div>
+      <!-- 個人/旅程切換：只有這趟旅程有公基金或代購紀錄時才顯示 -->
+      ${hasGroupFeature?`
+      <div class="pill-row" style="margin-bottom:14px">
+        <button class="pill ${detailViewMode==='personal'?'active':''}" onclick="setDetailMode('personal');renderExpList()">個人</button>
+        <button class="pill ${detailViewMode==='trip'?'active':''}" onclick="setDetailMode('trip');renderExpList()">旅程</button>
+      </div>`:''}
 
-    <!-- 個人/旅程切換 -->
-    <div class="pill-row" style="margin-bottom:16px">
-      <button class="pill ${detailViewMode==='personal'?'active':''}" onclick="setDetailMode('personal');renderExpList()">個人</button>
-      <button class="pill ${detailViewMode==='trip'?'active':''}" onclick="setDetailMode('trip');renderExpList()">旅程</button>
-    </div>
+      <!-- 合計（可點擊展開看幣別細項） -->
+      <div onclick="_expTotalOpen=!_expTotalOpen;renderExpList()" style="background:var(--card);border:1px solid var(--line-light);border-radius:14px;padding:12px 14px;margin-bottom:${(showCashChip||hasGroupFeature)?'10px':'14px'};cursor:pointer">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+          <span style="font-size:10.5px;color:var(--faint);font-weight:700;letter-spacing:.06em">合計（換算台幣）</span>
+          <span style="color:var(--faint);display:flex;transition:transform .2s;${_expTotalOpen?'transform:rotate(180deg)':''}">${ico('chevdown',12)}</span>
+        </div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between">
+          <div style="font-size:32px;font-weight:700;letter-spacing:-.02em;line-height:1.1">NT$ ${fmtNum(totalTwd)}</div>
+          <span style="font-size:12.5px;color:var(--green);font-weight:600">預估回饋 NT$ ${fmtNum(totalRebate)}</span>
+        </div>
+        ${_expTotalOpen&&curCodes.length?`<div style="font-size:12px;color:var(--sub);margin-top:8px;padding-top:8px;border-top:1px solid var(--line-light)">${curLinesHtml}</div>`:''}
+      </div>
 
-    <!-- 合計（換算台幣為主視覺） -->
-    <div style="font-size:11px;color:var(--faint);font-weight:700;letter-spacing:.06em;margin-bottom:2px">合計（換算台幣）</div>
-    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:38px;font-weight:700;letter-spacing:-.02em;line-height:1.1">NT$ ${fmtNum(totalTwd)}</div>
-      <span style="font-size:13px;color:var(--green)">預估回饋 NT$ ${fmtNum(totalRebate)}</span>
-    </div>
+      <!-- 現金／公基金卡片：現金恆常顯示；公基金只有實際有用到才顯示 -->
+      ${(showCashChip||hasGroupFeature)?`
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        ${showCashChip?`<div style="flex:1;background:var(--card);border:1px solid var(--line-light);border-radius:10px;padding:8px 10px">
+          <div style="font-size:9.5px;color:var(--faint);margin-bottom:2px">攜帶現金剩餘</div>
+          <div style="font-size:13px;font-weight:700">${cur.code} ${fmtNum(cashRemaining)}</div>
+        </div>`:''}
+        ${hasGroupFeature?`<div style="flex:1;background:var(--card);border:1px solid var(--line-light);border-radius:10px;padding:8px 10px">
+          <div style="font-size:9.5px;color:var(--faint);margin-bottom:2px">公基金剩餘</div>
+          <div style="font-size:13px;font-weight:700">${tripFunds.length?`${cur.code} ${fmtNum(fundRemaining)}`:'未設定'}</div>
+        </div>`:''}
+      </div>`:''}
 
-    <!-- 幣別明細（合併一行） -->
-    ${curCodes.length?`<div style="font-size:12.5px;color:var(--sub);margin-bottom:14px">${curLinesHtml}</div>`:''}
-
-    ${trip.cashAmount?`<div style="font-size:13px;color:var(--sub);margin-bottom:4px">攜帶現金剩餘 ${cur.code} ${fmtNum(cashRemaining)}</div>`:''}
-    ${tripFunds.length?`<div style="font-size:13px;color:var(--sub);margin-bottom:14px">公基金剩餘 ${cur.code} ${fmtNum(fundRemaining)}</div>`:''}
-
-    <div style="position:-webkit-sticky;position:sticky;top:0;background:var(--bg);z-index:9;padding-bottom:8px">
       <div style="display:flex;align-items:center;gap:8px;border-top:1px solid var(--line-light);padding-top:14px">
         <div style="font-size:15px;font-weight:700;flex-shrink:0;white-space:nowrap">消費紀錄</div>
         <div style="position:relative;flex:1;min-width:0">
