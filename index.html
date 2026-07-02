@@ -1566,7 +1566,7 @@ function renderExpList() {
                       ${cat?`<span style="width:12px;height:12px;display:inline-flex">${ico(cat.icon,12)}</span>${cat.name}`:''}
                       ${e.payment==='credit'&&e.cardId?` · ${DB.cards.find(c=>c.id===e.cardId)?.name||''}`:''}
                       ${e.store?` · ${e.store}`:''}
-                      ${e.rateAtRecord?` · 匯率 ${fmtRate(e.rateAtRecord)}`:''}
+                      ${(e.rateAtRecord&&e.currency&&e.currency!=='TWD')?` · 匯率 ${fmtRate(e.rateAtRecord)}`:''}
                     </div>
                   </button>
                 </div>`;
