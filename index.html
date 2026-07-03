@@ -161,6 +161,12 @@ select.field-input { appearance: none; cursor: pointer; }
 .drag-row { display: flex; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line-light); transition: background .1s, opacity .1s; }
 .drag-row.dragging { opacity: .35; }
 .drag-row.drag-over { background: var(--accent-light); }
+.switch-toggle { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; cursor: pointer; }
+.switch-toggle input { opacity: 0; width: 0; height: 0; }
+.switch-toggle span { position: absolute; inset: 0; background: var(--line); border-radius: 999px; transition: background .15s; }
+.switch-toggle span::before { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch-toggle input:checked + span { background: var(--accent); }
+.switch-toggle input:checked + span::before { left: 18px; }
 
 /* 統計進度條 */
 .stat-bar { height: 2px; background: var(--line-light); border-radius: 2px; position: relative; margin-top: 6px; }
@@ -279,10 +285,16 @@ const DEFAULT_CATEGORIES = [
   {id:'beauty',name:'美妝',icon:'sparkles'},{id:'clothes',name:'衣服',icon:'shirt'},
   {id:'other',name:'其他',icon:'box'},
 ];
-const PAYMENT_METHODS = [
-  {id:'cash',name:'現金'},{id:'credit',name:'信用卡'},
-  {id:'fund',name:'公基金'},{id:'other',name:'其他'},
+const DEFAULT_PAYMENT_METHODS = [
+  {id:'cash',name:'現金',requiresCard:false,core:true},
+  {id:'credit',name:'信用卡',requiresCard:true,core:true},
+  {id:'fund',name:'公基金',requiresCard:false,core:true},
+  {id:'other',name:'其他',requiresCard:false,core:true},
 ];
+function pmRequiresCard(pmId){
+  const pm=(DB.paymentMethods||DEFAULT_PAYMENT_METHODS).find(p=>p.id===pmId);
+  return pm?!!pm.requiresCard:pmId==='credit';
+}
 const WEEKDAYS = ['日','一','二','三','四','五','六'];
 
 // 新增分類時，依名稱關鍵字自動猜圖示；比對不到則用「其他」的箱子圖示
@@ -634,7 +646,8 @@ async function loginWithSyncCode() {
       DB.payees = cloud.payees || [];
       DB.funds = cloud.funds || [];
       DB.theme = cloud.theme || 'A';
-      ['trips','expenses','cards','categories','payees','funds','theme'].forEach(k=>lsSet(k,DB[k]));
+      DB.paymentMethods = (cloud.paymentMethods && cloud.paymentMethods.length) ? cloud.paymentMethods : [...DEFAULT_PAYMENT_METHODS];
+      ['trips','expenses','cards','categories','payees','funds','theme','paymentMethods'].forEach(k=>lsSet(k,DB[k]));
     } else {
       await sb.from('app_data').insert([{ sync_code: code, data: buildSyncPayload() }]);
     }
@@ -661,6 +674,7 @@ function buildSyncPayload() {
   return {
     trips: DB.trips, expenses: DB.expenses, cards: DB.cards,
     categories: DB.categories, payees: DB.payees, funds: DB.funds, theme: DB.theme,
+    paymentMethods: DB.paymentMethods,
   };
 }
 
@@ -696,7 +710,9 @@ let DB = {
   payees: lsGet('payees',[]),
   funds: lsGet('funds',[]),
   theme: lsGet('theme','A'),
+  paymentMethods: lsGet('paymentMethods', DEFAULT_PAYMENT_METHODS),
 };
+if (!DB.paymentMethods || !DB.paymentMethods.length) DB.paymentMethods = [...DEFAULT_PAYMENT_METHODS];
 if (!DB.categories.length) DB.categories = [...DEFAULT_CATEGORIES];
 // 一次性修正：把先前用預設箱子圖示建立、但名稱其實比對得到更合適圖示的舊分類修正過來（不影響使用者自己選過其他圖示的分類）
 (function fixLegacyCategoryIcons(){
@@ -719,15 +735,27 @@ function save(key) { lsSet(key, DB[key]); syncToCloud(); }
 function getCardRebate(card, subId, tripExps, excludeId) {
   const sub = card?.subRates?.find(s=>s.id===subId);
   if (!sub) return null;
+  // 解析共用額度群組：錨點＝這個方案自己的共用對象(若有)，否則就是自己；
+  // 群組成員＝所有指向同一個錨點的方案（含錨點本身）
+  const anchorId = sub.shareWithId || sub.id;
+  const anchorSub = card.subRates.find(s=>s.id===anchorId) || sub;
+  const groupSubs = (card.subRates||[]).filter(s=>s.id===anchorId||s.shareWithId===anchorId);
+  const groupIds = groupSubs.map(s=>s.id);
+  const sharing = groupIds.length>1;
+
   const usedInTrip = (tripExps||[])
-    .filter(e=>e.payment==='credit'&&e.cardId===card.id&&e.subRateId===subId&&e.id!==excludeId)
-    .reduce((s,e)=>s+(e.twdAmount||0)*(sub.rate/100),0);
-  const totalUsed = (sub.used||0)+usedInTrip;
-  // 沒填上限、也沒勾無上限 = 視同沒有設定額度限制，不應該顯示「額度已用完」
-  const noCapSet = sub.limit==null || sub.limit==='' || sub.limit<=0;
-  const unlimited = !!sub.unlimited || noCapSet;
-  const remaining = unlimited ? Infinity : Math.max(0,(sub.limit||0)-totalUsed);
-  return {rate:sub.rate,limit:unlimited?Infinity:(sub.limit||0),totalUsed,remaining,unlimited};
+    .filter(e=>pmRequiresCard(e.payment)&&e.cardId===card.id&&groupIds.includes(e.subRateId)&&e.id!==excludeId)
+    .reduce((s,e)=>{
+      const s2=card.subRates.find(x=>x.id===e.subRateId);
+      return s+(e.twdAmount||0)*((s2?.rate||0)/100);
+    },0);
+  const baseUsed = sharing ? groupSubs.reduce((s,x)=>s+(x.used||0),0) : (sub.used||0);
+  const totalUsed = baseUsed+usedInTrip;
+  // 沒填上限、也沒勾無上限 = 視同沒有設定額度限制，不應該顯示「額度已用完」；共用時以錨點方案的設定為準
+  const noCapSet = anchorSub.limit==null || anchorSub.limit==='' || anchorSub.limit<=0;
+  const unlimited = !!anchorSub.unlimited || noCapSet;
+  const remaining = unlimited ? Infinity : Math.max(0,(anchorSub.limit||0)-totalUsed);
+  return {rate:sub.rate,limit:unlimited?Infinity:(anchorSub.limit||0),totalUsed,remaining,unlimited,sharing};
 }
 
 function getFundInfo(fund, tripExps, excludeId) {
@@ -1498,7 +1526,7 @@ function renderExpList() {
     </span>`;
   }).join('<span style="color:var(--line);margin:0 8px">·</span>');
   const totalRebate=personalExps.reduce((sum,e)=>{
-    if(e.payment!=='credit'||!e.cardId||!e.subRateId) return sum;
+    if(!pmRequiresCard(e.payment)||!e.cardId||!e.subRateId) return sum;
     const card=DB.cards.find(c=>c.id===e.cardId);
     const sub=card?.subRates?.find(s=>s.id===e.subRateId);
     return sub?sum+(e.twdAmount||0)*(sub.rate/100):sum;
@@ -1564,7 +1592,7 @@ function renderExpList() {
                     </div>
                     <div style="font-size:11px;color:var(--faint);margin-top:2px;display:flex;align-items:center;gap:4px">
                       ${cat?`<span style="width:12px;height:12px;display:inline-flex">${ico(cat.icon,12)}</span>${cat.name}`:''}
-                      ${e.payment==='credit'&&e.cardId?` · ${DB.cards.find(c=>c.id===e.cardId)?.name||''}`:''}
+                      ${pmRequiresCard(e.payment)&&e.cardId?` · ${DB.cards.find(c=>c.id===e.cardId)?.name||''}`:''}
                       ${e.store?` · ${e.store}`:''}
                       ${(e.rateAtRecord&&e.currency&&e.currency!=='TWD')?` · 匯率 ${fmtRate(e.rateAtRecord)}`:''}
                     </div>
@@ -1640,7 +1668,7 @@ function renderExpList() {
 
         <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:6px">支付方式</div>
         <div class="pill-row" style="flex-wrap:wrap;margin-bottom:14px">
-          ${PAYMENT_METHODS.map(p=>`<button class="pill sm ${expFilterPayment===p.id?'active':''}" onclick="expFilterPayment=expFilterPayment==='${p.id}'?null:'${p.id}';renderExpList()">${p.name}</button>`).join('')}
+          ${DB.paymentMethods.map(p=>`<button class="pill sm ${expFilterPayment===p.id?'active':''}" onclick="expFilterPayment=expFilterPayment==='${p.id}'?null:'${p.id}';renderExpList()">${p.name}</button>`).join('')}
         </div>
 
         <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:6px">其他條件</div>
@@ -1943,7 +1971,7 @@ function renderQuickPanel(trip) {
     <div style="margin-bottom:14px">
       <div class="field-label">支付方式</div>
       <div class="pill-row">
-        ${PAYMENT_METHODS.map(pm=>`<button class="pill sm" id="qpm-${pm.id}" onclick="setQPayment('${pm.id}','${trip.id}')">${pm.name}</button>`).join('')}
+        ${DB.paymentMethods.map(pm=>`<button class="pill sm" id="qpm-${pm.id}" onclick="setQPayment('${pm.id}','${trip.id}')">${pm.name}</button>`).join('')}
       </div>
       <div id="q-cash-panel" style="display:none;margin-top:10px;background:var(--line-light);border-radius:12px;padding:12px 14px;justify-content:space-between">
         ${(()=>{
@@ -2013,12 +2041,12 @@ function setQPayment(pm, tripId) {
     updateQTwd(qTripId);
     return;
   }
-  qPayment=pm; if(pm!=='credit'){ qSelectedCardId=null; qSelectedSubRateId=null; document.querySelectorAll('.rebate-row').forEach(b=>b.classList.remove('active')); document.querySelectorAll('[id^="rebate-subs-"]').forEach(c=>c.innerHTML=''); }
+  qPayment=pm; if(!pmRequiresCard(pm)){ qSelectedCardId=null; qSelectedSubRateId=null; document.querySelectorAll('.rebate-row').forEach(b=>b.classList.remove('active')); document.querySelectorAll('[id^="rebate-subs-"]').forEach(c=>c.innerHTML=''); }
   document.querySelectorAll('[id^="qpm-"]').forEach(b=>b.classList.toggle('active',b.id===`qpm-${pm}`));
   const cp=document.getElementById('q-cash-panel'); if(cp) cp.style.display=pm==='cash'?'flex':'none';
-  const crp=document.getElementById('q-credit-panel'); if(crp) crp.style.display=pm==='credit'?'block':'none';
+  const crp=document.getElementById('q-credit-panel'); if(crp) crp.style.display=pmRequiresCard(pm)?'block':'none';
   // 若已透過上方回饋列選了卡片，開啟面板時把 pill 狀態與方案清單同步回來
-  if(pm==='credit'&&qSelectedCardId){
+  if(pmRequiresCard(pm)&&qSelectedCardId){
     document.querySelectorAll('[id^="qcard-"]').forEach(b=>b.classList.toggle('active',b.id===`qcard-${qSelectedCardId}`));
     const card=DB.cards.find(c=>c.id===qSelectedCardId);
     const qcardSubs=document.getElementById('qcard-subs');
@@ -2144,7 +2172,7 @@ function toggleRebateCard(cardId) {
     btn.classList.toggle('active',btn.id===`qpm-${qPayment}`);
   });
   // 同步底部「支付方式→信用卡」面板的顯示與卡片選取狀態
-  const crp=document.getElementById('q-credit-panel'); if(crp) crp.style.display=qPayment==='credit'?'block':'none';
+  const crp=document.getElementById('q-credit-panel'); if(crp) crp.style.display=pmRequiresCard(qPayment)?'block':'none';
   document.querySelectorAll('[id^="qcard-"]').forEach(b=>b.classList.toggle('active',b.id===`qcard-${qSelectedCardId}`));
   const qcardSubs=document.getElementById('qcard-subs'); if(qcardSubs) qcardSubs.innerHTML='';
   // 清空所有卡片的方案選單，只留下（如果有）目前選中卡片的
@@ -2215,7 +2243,7 @@ function quickSave(tripId) {
   const payment=qPayment||'cash';
 
   let subRateId=null;
-  if(payment==='credit'&&qSelectedCardId) {
+  if(pmRequiresCard(payment)&&qSelectedCardId) {
     const card=DB.cards.find(c=>c.id===qSelectedCardId);
     const subs=card?.subRates||[];
     if(qSelectedSubRateId&&subs.some(s=>s.id===qSelectedSubRateId)) {
@@ -2234,7 +2262,7 @@ function quickSave(tripId) {
     time:document.getElementById('q-time')?.value||nowTime(),
     categoryId:catId,
     payment,
-    cardId:payment==='credit'?qSelectedCardId:null,
+    cardId:pmRequiresCard(payment)?qSelectedCardId:null,
     subRateId,
     fundId:null,
     store:document.getElementById('q-store')?.value.trim()||'',
@@ -2264,11 +2292,11 @@ function expandToForm(tripId) {
     name:document.getElementById('q-name')?.value.trim()||'',
     categoryId:qCatId||DB.categories[0]?.id,
     payment:qPayment,
-    cardId:qPayment==='credit'?qSelectedCardId:null,
+    cardId:pmRequiresCard(qPayment)?qSelectedCardId:null,
   }:null;
   editingExpId=null; addSubView='form';
   _efPhotos=[...qPhotos]; _efPhotosLoadedFor='new';
-  _efSubRateId=qPayment==='credit'?qSelectedSubRateId:null;
+  _efSubRateId=pmRequiresCard(qPayment)?qSelectedSubRateId:null;
   render();
 }
 window.expandToForm=expandToForm;
@@ -2306,7 +2334,7 @@ function renderExpenseForm(trip) {
 
   // 信用卡回饋方案
   let subRateHtml='';
-  if(defPayment==='credit'&&defCardId) {
+  if(pmRequiresCard(defPayment)&&defCardId) {
     const card=DB.cards.find(c=>c.id===defCardId);
     if(card?.subRates?.length) {
       const autoSubRateId=card.subRates.map(s=>({s,info:getCardRebate(card,s.id,tripExps,e0?.id)})).filter(x=>x.info.remaining>0).sort((a,b)=>b.s.rate-a.s.rate)[0]?.s.id || card.subRates[0].id;
@@ -2407,10 +2435,10 @@ function renderExpenseForm(trip) {
     <div class="field-group">
       <div class="field-label">支付方式</div>
       <div class="pill-row">
-        ${PAYMENT_METHODS.map(pm=>`<button class="pill sm ${defPayment===pm.id?'active':''}" id="ef-pm-${pm.id}" onclick="setEfPayment('${pm.id}','${trip.id}')">${pm.name}</button>`).join('')}
+        ${DB.paymentMethods.map(pm=>`<button class="pill sm ${defPayment===pm.id?'active':''}" id="ef-pm-${pm.id}" onclick="setEfPayment('${pm.id}','${trip.id}')">${pm.name}</button>`).join('')}
       </div>
       <div id="ef-payment-detail" style="margin-top:12px">
-        ${defPayment==='credit'?buildCreditDetail(tripCards,defCardId,subRateHtml):''}
+        ${pmRequiresCard(defPayment)?buildCreditDetail(tripCards,defCardId,subRateHtml):''}
         ${defPayment==='fund'?buildFundDetail(tripFunds,defFundId,tripExps,e0?.id,trip.currency):''}
       </div>
     </div>
@@ -2496,7 +2524,7 @@ window.selectPayee=function(id) {
 };
 window.setEfPayment=function(pm,tripId) {
   _efPayment=pm;
-  if(pm!=='credit') _efCardId=null;
+  if(!pmRequiresCard(pm)) _efCardId=null;
   if(pm!=='fund') _efFundId=null;
   document.querySelectorAll('[id^="ef-pm-"]').forEach(b=>b.classList.toggle('active',b.id===`ef-pm-${pm}`));
   const trip=DB.trips.find(t=>t.id===tripId);
@@ -2505,7 +2533,7 @@ window.setEfPayment=function(pm,tripId) {
   const tripExps=DB.expenses.filter(e=>e.tripId===tripId);
   const detail=document.getElementById('ef-payment-detail');
   if(!detail) return;
-  if(pm==='credit') detail.innerHTML=buildCreditDetail(tripCards,null,'');
+  if(pmRequiresCard(pm)) detail.innerHTML=buildCreditDetail(tripCards,null,'');
   else if(pm==='fund') detail.innerHTML=buildFundDetail(tripFunds,null,tripExps,null,trip.currency);
   else detail.innerHTML='';
 };
@@ -2591,8 +2619,8 @@ function submitExpense(tripId,existingId) {
   const twd=cur==='TWD'?amt:amt*(rate||1);
   const catId=_efCatId||(existingId?DB.expenses.find(e=>e.id===existingId)?.categoryId:null)||DB.categories[0]?.id;
   const payment=_efPayment||(existingId?DB.expenses.find(e=>e.id===existingId)?.payment:null)||'cash';
-  const cardId=payment==='credit'?(_efCardId||(existingId?DB.expenses.find(e=>e.id===existingId)?.cardId:null)):null;
-  const subRateId=payment==='credit'?(_efSubRateId||(existingId?DB.expenses.find(e=>e.id===existingId)?.subRateId:null)):null;
+  const cardId=pmRequiresCard(payment)?(_efCardId||(existingId?DB.expenses.find(e=>e.id===existingId)?.cardId:null)):null;
+  const subRateId=pmRequiresCard(payment)?(_efSubRateId||(existingId?DB.expenses.find(e=>e.id===existingId)?.subRateId:null)):null;
   const fundId=payment==='fund'?(_efFundId||(existingId?DB.expenses.find(e=>e.id===existingId)?.fundId:null)):null;
 
   const expense={
@@ -2672,7 +2700,7 @@ function renderStats() {
   // 信用卡
   const cardMap={};
   personalExps.forEach(e=>{
-    if(e.payment!=='credit'||!e.cardId) return;
+    if(!pmRequiresCard(e.payment)||!e.cardId) return;
     const card=DB.cards.find(c=>c.id===e.cardId);
     if(!card) return;
     const sub=card.subRates?.find(s=>s.id===e.subRateId);
@@ -2768,6 +2796,20 @@ function renderSettings() {
       <div class="accordion-body">
         ${DB.cards.length===0?`<div style="font-size:12px;color:var(--faint);margin-bottom:12px">尚未新增信用卡</div>`:`<div id="drag-card-list">${buildDragCardList()}</div>`}
         <button class="btn-primary" style="background:var(--accent-light);color:var(--accent);border:1.5px solid var(--accent);margin-top:8px" onclick="navStack.settings='add-card';settingsEditCardId=null;render()">+ 新增信用卡</button>
+      </div>
+    </div>
+
+    <!-- 付款方式管理 -->
+    <div class="accordion">
+      <button class="accordion-header" onclick="toggleAccordion(this)">
+        <div class="accordion-title">${ico('creditcard',18,'var(--sub)')} 付款方式管理</div>
+        <span class="accordion-chevron">${ico('chevdown',18)}</span>
+      </button>
+      <div class="accordion-body">
+        <div style="font-size:11px;color:var(--faint);margin-bottom:12px;line-height:1.6">現金、信用卡、電子錢包（LINE Pay／PayPay／全支付…）都在這裡管理。標記「可選擇信用卡」的付款方式，記帳時會再跳出來選是哪張卡、哪組回饋方案。</div>
+        <div id="drag-pm-list">${buildDragPmList()}</div>
+        <div id="add-pm-section" style="margin-top:8px"></div>
+        <button class="btn-primary" style="background:var(--accent-light);color:var(--accent);border:1.5px solid var(--accent);margin-top:8px;padding:9px;font-size:12px" onclick="showAddPm()">+ 新增付款方式</button>
       </div>
     </div>
 
@@ -2900,7 +2942,7 @@ function exportCSV() {
     const t=DB.trips.find(t=>t.id===e.tripId);
     const cat=DB.categories.find(c=>c.id===e.categoryId);
     const card=DB.cards.find(c=>c.id===e.cardId);
-    const pm=PAYMENT_METHODS.find(p=>p.id===e.payment);
+    const pm=DB.paymentMethods.find(p=>p.id===e.payment);
     return [
       e.date||'',
       e.time||'',
@@ -2967,7 +3009,7 @@ function importCSV(event) {
         const catName=cols[idx.cat]||'';
         const cat=DB.categories.find(c=>c.name===catName);
         const pmName=cols[idx.payment]||'';
-        const pm=PAYMENT_METHODS.find(p=>p.name===pmName);
+        const pm=DB.paymentMethods.find(p=>p.name===pmName);
 
         const amt=parseFloat(cols[idx.amount])||0;
         const twd=parseFloat(cols[idx.twd])||amt;
@@ -3070,8 +3112,8 @@ function buildDragCardList() {
 }
 
 // ---- 拖曳排序 (即時跟手指版，支援分類/信用卡兩種清單) ----
-function dragRowsFor(kind){ return document.querySelectorAll(kind==='card'?'#drag-card-list .drag-row':'#drag-cat-list .drag-row'); }
-function reorderByKind(kind,from,to){ kind==='card'?reorderCard(from,to):reorderCat(from,to); }
+function dragRowsFor(kind){ return document.querySelectorAll(kind==='card'?'#drag-card-list .drag-row':kind==='pm'?'#drag-pm-list .drag-row':'#drag-cat-list .drag-row'); }
+function reorderByKind(kind,from,to){ kind==='card'?reorderCard(from,to):kind==='pm'?reorderPm(from,to):reorderCat(from,to); }
 
 let dragIdx=null, dragOverIdx=null, dragKind='cat';
 function dragStart(i,kind='cat'){dragIdx=i;dragKind=kind;}
@@ -3211,6 +3253,92 @@ function reorderCard(from,to){
   document.getElementById('drag-card-list').innerHTML=buildDragCardList();
 }
 
+// 付款方式拖曳排序
+function buildDragPmList() {
+  return DB.paymentMethods.map((pm,i)=>`
+    <div class="drag-row" id="drag-pm-${pm.id}" draggable="true"
+      ontouchstart="touchDragStart(event,${i},'pm')"
+      ondragstart="dragStart(${i},'pm')" ondragover="dragOver(event,${i},'pm')" ondrop="dragDrop(${i},'pm')" ondragend="dragEnd('pm')"
+      style="cursor:grab;flex-direction:column;align-items:stretch">
+      <div style="display:flex;align-items:center;width:100%">
+        <span style="color:var(--line);margin-right:10px;display:flex">${ico('drag',16)}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px;font-weight:700">${pm.name}</div>
+          <div style="font-size:11px;color:var(--faint)">${pm.requiresCard?'可選擇信用卡':'不需選擇信用卡'}</div>
+        </div>
+        <button onclick="togglePmEdit('${pm.id}')" style="background:none;border:none;cursor:pointer;color:var(--faint);display:flex;padding:4px">${ico('edit',15)}</button>
+        ${pm.core?'':`<button onclick="deletePmConfirm('${pm.id}','${pm.name}')" style="background:none;border:none;cursor:pointer;color:var(--faint);display:flex;padding:4px">${ico('trash',15)}</button>`}
+      </div>
+      <div id="pm-edit-${pm.id}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line-light)">
+        <input class="field-input" id="pm-name-${pm.id}" value="${pm.name}" style="font-size:13px;margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
+          <input type="checkbox" id="pm-requirescard-${pm.id}" ${pm.requiresCard?'checked':''} style="width:14px;height:14px;accent-color:var(--accent)">
+          <span style="font-size:12px;color:var(--sub)">記帳時需要選擇信用卡/電子錢包</span>
+        </label>
+        <button class="btn-outline" style="padding:8px;font-size:12px" onclick="savePm('${pm.id}')">儲存</button>
+      </div>
+    </div>`).join('');
+}
+
+function togglePmEdit(id){
+  const el=document.getElementById(`pm-edit-${id}`);
+  if(el) el.style.display=el.style.display==='none'?'block':'none';
+}
+window.togglePmEdit=togglePmEdit;
+
+function savePm(id){
+  const name=document.getElementById(`pm-name-${id}`)?.value.trim();
+  if(!name){showToast('請填寫名稱');return;}
+  const requiresCard=document.getElementById(`pm-requirescard-${id}`)?.checked||false;
+  DB.paymentMethods=DB.paymentMethods.map(p=>p.id===id?{...p,name,requiresCard}:p);
+  save('paymentMethods');
+  document.getElementById('drag-pm-list').innerHTML=buildDragPmList();
+  showToast('已儲存');
+}
+window.savePm=savePm;
+
+function showAddPm(){
+  document.getElementById('add-pm-section').innerHTML=`
+    <div style="margin-top:8px;padding:12px;border:1px solid var(--line);border-radius:12px">
+      <input class="field-input" id="new-pm-name" placeholder="名稱（例：LINE Pay）" style="font-size:13px;margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
+        <input type="checkbox" id="new-pm-requirescard" checked style="width:14px;height:14px;accent-color:var(--accent)">
+        <span style="font-size:12px;color:var(--sub)">記帳時需要選擇信用卡/電子錢包</span>
+      </label>
+      <button class="btn-outline" style="padding:8px;font-size:12px" onclick="addPm()">新增</button>
+    </div>`;
+  document.getElementById('new-pm-name').focus();
+}
+window.showAddPm=showAddPm;
+
+function addPm(){
+  const name=document.getElementById('new-pm-name')?.value.trim();
+  if(!name) return;
+  const requiresCard=document.getElementById('new-pm-requirescard')?.checked||false;
+  DB.paymentMethods.push({id:uid('pm'),name,requiresCard,core:false});
+  save('paymentMethods');
+  document.getElementById('drag-pm-list').innerHTML=buildDragPmList();
+  document.getElementById('add-pm-section').innerHTML='';
+}
+window.addPm=addPm;
+
+function deletePmConfirm(id,name){
+  showModal(`刪除「${name}」?`,'已經用這個付款方式記錄過的消費不會被刪除，只是無法再選用這個選項。',()=>{
+    DB.paymentMethods=DB.paymentMethods.filter(p=>p.id!==id); save('paymentMethods');
+    document.getElementById('drag-pm-list').innerHTML=buildDragPmList();
+  },true);
+}
+window.deletePmConfirm=deletePmConfirm;
+
+function reorderPm(from,to){
+  if(from===null||to===null||from===to) return;
+  const arr=[...DB.paymentMethods];
+  const [moved]=arr.splice(from,1);
+  arr.splice(to,0,moved);
+  DB.paymentMethods=arr; save('paymentMethods');
+  document.getElementById('drag-pm-list').innerHTML=buildDragPmList();
+}
+
 function showAddCat(){
   document.getElementById('add-cat-section').innerHTML=`
     <div style="display:flex;gap:8px;align-items:flex-end;margin-top:8px">
@@ -3295,29 +3423,35 @@ function renderCardForm(){
     </div>
     <div style="font-size:11px;color:var(--faint);margin-bottom:16px;line-height:1.6">很多卡片會分月份/季節切換回饋方案，每個方案可各自設定回饋%、回饋金額上限(NT$)，以及出國前已使用的回饋額度(NT$)。記帳時可依當下適用的方案選擇。</div>
     <div id="subrate-rows">
-      ${(card?.subRates||[]).map(sub=>buildSubRateRow(sub)).join('')}
+      ${(card?.subRates||[]).map(sub=>buildSubRateRow(sub, card?.subRates||[])).join('')}
     </div>
     <button class="btn-primary" style="margin-top:8px" onclick="submitCard('${card?.id||''}')">
       ${isEdit?'儲存變更':'新增信用卡'}
     </button>`;
 }
 
-function buildSubRateRow(sub){
+function buildSubRateRow(sub, allSubs){
+  allSubs = allSubs || [];
   const rate=(sub.rate===0||sub.rate===''||sub.rate===undefined)?'':sub.rate;
   const limit=sub.unlimited?'':(sub.limit==null||sub.limit===0||sub.limit===''||sub.limit===undefined)?'':sub.limit;
   const used=(sub.used===0||sub.used===''||sub.used===undefined)?'':sub.used;
   const unlimited=sub.unlimited||false;
-  return `<div id="sr-row-${sub.id}" style="margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--line-light)">
+  const sharing=!!sub.shareWithId;
+  const shareOpts=allSubs.filter(s=>s.id!==sub.id);
+  const shareOptsHtml=shareOpts.length
+    ? shareOpts.map(o=>`<option value="${o.id}" ${o.id===sub.shareWithId?'selected':''}>${o.name||'（未命名方案）'}</option>`).join('')
+    : `<option value="">（請先新增其他方案）</option>`;
+  return `<div id="sr-row-${sub.id}" data-share-with="${sub.shareWithId||''}" style="margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--line-light)">
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <input class="field-input" id="sr-name-${sub.id}" value="${sub.name||''}" placeholder="方案名稱（例：海外消費）" style="flex:1;font-size:14px;font-weight:600">
       <button onclick="removeSubRateRow('${sub.id}')" style="background:none;border:none;cursor:pointer;color:var(--faint)">${ico('x',16)}</button>
     </div>
-    <div style="display:flex;gap:20px;align-items:flex-end">
+    <div style="display:flex;gap:20px;align-items:flex-end;margin-bottom:${sharing?'0':'12px'}">
       <div style="flex:1">
         <div style="font-size:10px;color:var(--faint);margin-bottom:4px">回饋%</div>
         <input type="number" inputmode="decimal" id="sr-rate-${sub.id}" value="${rate}" class="field-input" style="font-size:14px">
       </div>
-      <div style="flex:1.6">
+      <div style="flex:1.6" id="sr-limit-wrap-${sub.id}">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
           <div style="font-size:10px;color:var(--faint)">上限(NT$)</div>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
@@ -3325,29 +3459,73 @@ function buildSubRateRow(sub){
             <span style="font-size:10px;color:var(--sub)">無上限</span>
           </label>
         </div>
-        <input type="number" inputmode="decimal" id="sr-limit-${sub.id}" value="${limit}" class="field-input" style="font-size:14px;opacity:${unlimited?'0.3':'1'}" ${unlimited?'disabled':''}>
+        <input type="number" inputmode="decimal" id="sr-limit-${sub.id}" value="${limit}" class="field-input" style="font-size:14px;opacity:${(unlimited||sharing)?'0.3':'1'}" ${(unlimited||sharing)?'disabled':''}>
       </div>
-      <div style="flex:1">
+      <div style="flex:1" id="sr-used-wrap-${sub.id}">
         <div style="font-size:10px;color:var(--faint);margin-bottom:4px">已用(NT$)</div>
-        <input type="number" inputmode="decimal" id="sr-used-${sub.id}" value="${used}" class="field-input" style="font-size:14px">
+        <input type="number" inputmode="decimal" id="sr-used-${sub.id}" value="${used}" class="field-input" style="font-size:14px;opacity:${sharing?'0.3':'1'}" ${sharing?'disabled':''}>
       </div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;${sharing?'margin-bottom:8px':''}">
+      <span style="font-size:11.5px;color:var(--sub);font-weight:600">與其他方案共用額度</span>
+      <label class="switch-toggle"><input type="checkbox" id="sr-share-toggle-${sub.id}" ${sharing?'checked':''} onchange="toggleShareLimit('${sub.id}')"><span></span></label>
+    </div>
+    <div id="sr-share-wrap-${sub.id}" style="display:${sharing?'block':'none'}">
+      <select id="sr-share-${sub.id}" class="field-input" style="font-size:13px">${sharing?shareOptsHtml:''}</select>
+      <div style="font-size:10.5px;color:var(--faint);line-height:1.6;margin-top:6px">開啟後這個方案不用自己填上限，會跟選擇的對象共用同一包額度，花費一起累計。</div>
     </div>
   </div>`;
 }
 
+function refreshShareOptions(excludeId){
+  // 收集目前表單上所有方案（含尚未儲存的新增列），作為共用對象的候選清單
+  const rows=Array.from(document.querySelectorAll('[id^="sr-row-"]'));
+  return rows
+    .filter(row=>row.id!==`sr-row-${excludeId}`)
+    .map(row=>{
+      const id=row.id.replace('sr-row-','');
+      const name=document.getElementById(`sr-name-${id}`)?.value.trim()||'（未命名方案）';
+      return {id,name};
+    });
+}
+
+function toggleShareLimit(subId){
+  const cb=document.getElementById(`sr-share-toggle-${subId}`);
+  const wrap=document.getElementById(`sr-share-wrap-${subId}`);
+  const limitInput=document.getElementById(`sr-limit-${subId}`);
+  const usedInput=document.getElementById(`sr-used-${subId}`);
+  const unlimitedChecked=document.getElementById(`sr-unlimited-${subId}`)?.checked||false;
+  if(!cb||!wrap) return;
+  wrap.style.display=cb.checked?'block':'none';
+  if(limitInput){ limitInput.disabled=cb.checked||unlimitedChecked; limitInput.style.opacity=(cb.checked||unlimitedChecked)?'0.3':'1'; }
+  if(usedInput){ usedInput.disabled=cb.checked; usedInput.style.opacity=cb.checked?'0.3':'1'; }
+  if(cb.checked){
+    const opts=refreshShareOptions(subId);
+    const select=document.getElementById(`sr-share-${subId}`);
+    const currentVal=document.getElementById(`sr-row-${subId}`)?.dataset.shareWith||'';
+    if(select){
+      select.innerHTML=opts.length
+        ? opts.map(o=>`<option value="${o.id}" ${o.id===currentVal?'selected':''}>${o.name}</option>`).join('')
+        : `<option value="">（請先新增其他方案）</option>`;
+    }
+  }
+}
+window.toggleShareLimit=toggleShareLimit;
+
 function toggleUnlimited(subId){
   const cb=document.getElementById(`sr-unlimited-${subId}`);
   const limitInput=document.getElementById(`sr-limit-${subId}`);
+  const sharing=document.getElementById(`sr-share-toggle-${subId}`)?.checked||false;
   if(!cb||!limitInput) return;
-  limitInput.disabled=cb.checked;
-  limitInput.style.opacity=cb.checked?'0.3':'1';
+  limitInput.disabled=cb.checked||sharing;
+  limitInput.style.opacity=(cb.checked||sharing)?'0.3':'1';
   if(cb.checked) limitInput.value='';
 }
 window.toggleUnlimited=toggleUnlimited;
 
 let _tempSubIds=[];
 function addSubRateRow(){
-  const newSub={id:uid('sub'),name:'',rate:'',limit:'',used:'',unlimited:false};
+  const newSub={id:uid('sub'),name:'',rate:'',limit:'',used:'',unlimited:false,shareWithId:null};
   _tempSubIds.push(newSub.id);
   document.getElementById('subrate-rows').insertAdjacentHTML('beforeend',buildSubRateRow(newSub));
 }
@@ -3365,12 +3543,15 @@ function submitCard(existingId){
     const n=document.getElementById(`sr-name-${id}`)?.value.trim();
     if(!n) return;
     const isUnlimited=document.getElementById(`sr-unlimited-${id}`)?.checked||false;
+    const isSharing=document.getElementById(`sr-share-toggle-${id}`)?.checked||false;
+    const shareWithId=isSharing?(document.getElementById(`sr-share-${id}`)?.value||null):null;
     subRates.push({
       id, name:n,
       rate:parseFloat(document.getElementById(`sr-rate-${id}`)?.value)||0,
       unlimited:isUnlimited,
       limit:isUnlimited?Infinity:(parseFloat(document.getElementById(`sr-limit-${id}`)?.value)||null),
-      used:parseFloat(document.getElementById(`sr-used-${id}`)?.value)||0,
+      used:isSharing?0:(parseFloat(document.getElementById(`sr-used-${id}`)?.value)||0),
+      shareWithId:shareWithId||null,
     });
   });
   const card={id:existingId||uid('card'),name,subRates};
@@ -3540,7 +3721,8 @@ function initApp() {
           DB.payees = cloud.payees || DB.payees;
           DB.funds = cloud.funds || DB.funds;
           DB.theme = cloud.theme || DB.theme;
-          ['trips','expenses','cards','categories','payees','funds','theme'].forEach(k=>lsSet(k,DB[k]));
+          DB.paymentMethods = (cloud.paymentMethods&&cloud.paymentMethods.length) ? cloud.paymentMethods : DB.paymentMethods;
+          ['trips','expenses','cards','categories','payees','funds','theme','paymentMethods'].forEach(k=>lsSet(k,DB[k]));
           applyTheme(DB.theme);
           render();
         }
