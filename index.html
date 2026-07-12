@@ -146,6 +146,11 @@ select.field-input { appearance: none; cursor: pointer; }
 
 /* 代購標籤 */
 .purchase-tag { font-size: 10px; color: var(--accent); border: 1px solid var(--accent-light); padding: 1px 6px; border-radius: 999px; flex-shrink: 0; }
+.pay-tag { font-size: 10px; font-weight: 600; padding: 1.5px 7px; border-radius: 999px; flex-shrink: 0; white-space: nowrap; }
+.pay-tag.cash { background: var(--line-light); color: var(--sub); }
+.pay-tag.card { background: var(--accent-light); color: var(--accent); }
+.rate-flag { font-size: 9.5px; font-weight: 600; padding: 1.5px 7px; border-radius: 999px; background: var(--accent-light); color: var(--accent); flex-shrink: 0; white-space: nowrap; }
+.day-rate-badge { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--line-light); color: var(--sub); }
 
 /* 信用卡回饋列 */
 .rebate-row { width: 100%; display: flex; justify-content: space-between; align-items: center; background: #F5F5F3; border-radius: 999px; padding: 8px 14px; margin-bottom: 6px; border: 1.5px solid transparent; cursor: pointer; font-family: inherit; }
@@ -294,6 +299,16 @@ const DEFAULT_PAYMENT_METHODS = [
 function pmRequiresCard(pmId){
   const pm=(DB.paymentMethods||DEFAULT_PAYMENT_METHODS).find(p=>p.id===pmId);
   return pm?!!pm.requiresCard:pmId==='credit';
+}
+// 明細列表用：回傳 {label, isCash} 給付款方式徽章。
+// 需要卡片的付款方式（信用卡、需選卡的電子錢包）顯示卡片名稱；其餘顯示付款方式名稱本身。
+function pmBadgeInfo(e){
+  const pm=(DB.paymentMethods||DEFAULT_PAYMENT_METHODS).find(p=>p.id===e.payment);
+  if(pmRequiresCard(e.payment)&&e.cardId){
+    const card=DB.cards.find(c=>c.id===e.cardId);
+    return {label:card?.name||pm?.name||'', isCash:false};
+  }
+  return {label:pm?.name||'', isCash:e.payment==='cash'};
 }
 const WEEKDAYS = ['日','一','二','三','四','五','六'];
 
@@ -1563,17 +1578,28 @@ function renderExpList() {
       const items=grouped[date].sort((a,b)=>(b.time||'').localeCompare(a.time||''));
       const dayTotal=items.reduce((s,e)=>s+(e.twdAmount||0),0);
       const weekday=WEEKDAYS[new Date(date).getDay()];
+      // 當日主要匯率：外幣紀錄裡出現次數最多的那個匯率值，用來在日期列統一顯示一次
+      const rateCounts={};
+      items.forEach(e=>{if(e.currency&&e.currency!=='TWD'&&e.rateAtRecord){const k=fmtRate(e.rateAtRecord);rateCounts[k]=(rateCounts[k]||0)+1;}});
+      const dayRateKeys=Object.keys(rateCounts);
+      const dayRateKey=dayRateKeys.length?dayRateKeys.reduce((a,b)=>rateCounts[a]>=rateCounts[b]?a:b):null;
       return `
         <div style="margin-bottom:24px">
-          <div style="display:flex;justify-content:space-between;margin-bottom:12px">
-            <span style="font-size:12px;font-weight:700;color:var(--sub)">${date.slice(5).replace('-','/')} · 星期${weekday}</span>
-            <span style="font-size:12px;color:var(--faint)">NT$ ${fmtNum(dayTotal)}</span>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px">
+            <span style="font-size:12px;font-weight:700;color:var(--sub);flex-shrink:0">${date.slice(5).replace('-','/')} · 星期${weekday}</span>
+            <div style="display:flex;align-items:center;gap:8px;min-width:0">
+              ${dayRateKey?`<span class="day-rate-badge">當日匯率 ${dayRateKey}</span>`:''}
+              <span style="font-size:12px;color:var(--faint);flex-shrink:0">NT$ ${fmtNum(dayTotal)}</span>
+            </div>
           </div>
           <div class="timeline">
             ${items.map((e,idx)=>{
               const cat=DB.categories.find(c=>c.id===e.categoryId);
               const payeesList=DB.payees[0]?.items||DB.payees||[];
               const payee=payeesList.find(p=>p.id===e.purchaseForId);
+              const pmBadge=pmBadgeInfo(e);
+              const itemRateKey=(e.currency&&e.currency!=='TWD'&&e.rateAtRecord)?fmtRate(e.rateAtRecord):null;
+              const rateDiffers=itemRateKey&&dayRateKey&&itemRateKey!==dayRateKey;
               return `
                 <div class="timeline-item" style="${idx===items.length-1?'padding-bottom:0':''}">
                   <div class="timeline-dot"></div>
@@ -1590,11 +1616,12 @@ function renderExpList() {
                         ${e.currency!=='TWD'?`<div style="font-size:10px;color:var(--faint)">≈NT$${fmtNum(e.twdAmount)}</div>`:''}
                       </div>
                     </div>
-                    <div style="font-size:11px;color:var(--faint);margin-top:2px;display:flex;align-items:center;gap:4px">
-                      ${cat?`<span style="width:12px;height:12px;display:inline-flex">${ico(cat.icon,12)}</span>${cat.name}`:''}
-                      ${pmRequiresCard(e.payment)&&e.cardId?` · ${DB.cards.find(c=>c.id===e.cardId)?.name||''}`:''}
-                      ${e.store?` · ${e.store}`:''}
-                      ${(e.rateAtRecord&&e.currency&&e.currency!=='TWD')?` · 匯率 ${fmtRate(e.rateAtRecord)}`:''}
+                    <div style="font-size:11px;color:var(--faint);margin-top:5px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+                      ${cat?`<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:12px;height:12px;display:inline-flex">${ico(cat.icon,12)}</span>${cat.name}</span>`:''}
+                      ${cat&&pmBadge.label?`<span style="color:var(--line)">·</span>`:''}
+                      ${pmBadge.label?`<span class="pay-tag ${pmBadge.isCash?'cash':'card'}">${pmBadge.label}</span>`:''}
+                      ${e.store?`<span style="color:var(--line)">·</span><span>${e.store}</span>`:''}
+                      ${rateDiffers?`<span class="rate-flag">⚠ 匯率 ${itemRateKey}（非當日）</span>`:''}
                     </div>
                   </button>
                 </div>`;
