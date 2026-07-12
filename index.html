@@ -2317,7 +2317,7 @@ function expandToForm(tripId) {
   expandedPrefill=amt>0?{
     amount:amt, currency:qCurrency, twdAmount:twd,
     name:document.getElementById('q-name')?.value.trim()||'',
-    categoryId:qCatId||DB.categories[0]?.id,
+    categoryId:qCatId||null,
     payment:qPayment,
     cardId:pmRequiresCard(qPayment)?qSelectedCardId:null,
   }:null;
@@ -2350,7 +2350,7 @@ function renderExpenseForm(trip) {
   const defAmt=e0?.amount??pre.amount??'';
   const defCur=e0?.currency??pre.currency??trip.currency;
   const defName=e0?.name??pre.name??'';
-  const defCatId=e0?.categoryId??pre.categoryId??DB.categories[0]?.id;
+  const defCatId=e0?.categoryId??pre.categoryId??null;
   const defPayment=e0?.payment??pre.payment??'cash';
   const defCardId=e0?.cardId??pre.cardId??null;
   const defSubRateId=e0?.subRateId??null;
@@ -2449,6 +2449,7 @@ function renderExpenseForm(trip) {
     <div class="field-group">
       <div class="field-label">類別</div>
       <div class="pill-row">
+        <button class="pill sm ${!defCatId?'active':''}" id="ef-cat-none" onclick="setEfCat('')">未分類</button>
         ${DB.categories.map(cat=>`
           <button class="pill sm ${defCatId===cat.id?'active':''}" id="ef-cat-${cat.id}" onclick="setEfCat('${cat.id}')">
             <span style="display:flex;align-items:center;gap:4px">
@@ -2538,8 +2539,8 @@ window.setEfCur=function(code,tripId) {
   window.updateEfTwd(tripId);
 };
 window.setEfCat=function(id) {
-  _efCatId=id;
-  document.querySelectorAll('[id^="ef-cat-"]').forEach(b=>b.classList.toggle('active',b.id===`ef-cat-${id}`));
+  _efCatId=id; // '' 代表使用者主動選「未分類」，null 代表完全沒去動過這欄位
+  document.querySelectorAll('[id^="ef-cat-"]').forEach(b=>b.classList.toggle('active',b.id===`ef-cat-${id||'none'}`));
 };
 window.togglePurchaseFor=function() {
   const checked=document.getElementById('ef-ispurchase')?.checked;
@@ -2644,7 +2645,7 @@ function submitExpense(tripId,existingId) {
   const rate=getRate(trip);
   const cur=_efCur||(existingId?DB.expenses.find(e=>e.id===existingId)?.currency:trip.currency)||trip.currency;
   const twd=cur==='TWD'?amt:amt*(rate||1);
-  const catId=_efCatId||(existingId?DB.expenses.find(e=>e.id===existingId)?.categoryId:null)||DB.categories[0]?.id;
+  const catId=_efCatId!==null?(_efCatId||null):((existingId?DB.expenses.find(e=>e.id===existingId)?.categoryId:null)||null);
   const payment=_efPayment||(existingId?DB.expenses.find(e=>e.id===existingId)?.payment:null)||'cash';
   const cardId=pmRequiresCard(payment)?(_efCardId||(existingId?DB.expenses.find(e=>e.id===existingId)?.cardId:null)):null;
   const subRateId=pmRequiresCard(payment)?(_efSubRateId||(existingId?DB.expenses.find(e=>e.id===existingId)?.subRateId:null)):null;
@@ -2721,7 +2722,7 @@ function renderStats() {
   const catMap={};
   personalExps.forEach(e=>{catMap[e.categoryId]=(catMap[e.categoryId]||0)+(e.twdAmount||0);});
   const totalAmt=Object.values(catMap).reduce((s,v)=>s+v,0);
-  const catRows=Object.entries(catMap).map(([id,total])=>({cat:DB.categories.find(c=>c.id===id),total,pct:totalAmt?(total/totalAmt)*100:0}))
+  const catRows=Object.entries(catMap).map(([id,total])=>({cat:DB.categories.find(c=>c.id===id)||(id==='null'?{id:null,name:'未分類',icon:'box'}:null),total,pct:totalAmt?(total/totalAmt)*100:0}))
     .filter(x=>x.cat).sort((a,b)=>b.total-a.total);
 
   // 信用卡
