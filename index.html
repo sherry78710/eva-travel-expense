@@ -2029,6 +2029,8 @@ function renderAdd() {
 let qSelectedCardId=null;
 let qSelectedSubRateId=null;
 let qTripId=null;
+// 快速記帳面板用：目前旅程已經記錄的消費，讓「剩餘額度」計算能反映實際已刷金額
+function qTripExps(){ return DB.expenses.filter(e=>e.tripId===qTripId); }
 let qPayment=null;
 let qCatId=null;
 let qPhotos=[];
@@ -2047,7 +2049,7 @@ function renderQuickPanel(trip) {
     const subs=card.subRates||[];
     if(!subs.length) return null;
     const cappedSubs=subs
-      .map(s=>({s,info:getCardRebate(card,s.id,[],null)}))
+      .map(s=>({s,info:getCardRebate(card,s.id,qTripExps(),null)}))
       .filter(x=>x.info && isFinite(x.info.remaining));
     if(!cappedSubs.length) return null; // 全部方案都無上限 → 整張卡不列
     const tightest=cappedSubs.sort((a,b)=>a.info.remaining-b.info.remaining)[0];
@@ -2199,7 +2201,7 @@ function selectQCard(cardId) {
     const card=DB.cards.find(c=>c.id===qSelectedCardId);
     const subs=card?.subRates||[];
     if(subs.length>1) {
-      const best=subs.map(s=>({s,info:getCardRebate(card,s.id,[],null)})).filter(x=>x.info.remaining>0).sort((a,b)=>b.s.rate-a.s.rate)[0]||{s:subs[0]};
+      const best=subs.map(s=>({s,info:getCardRebate(card,s.id,qTripExps(),null)})).filter(x=>x.info.remaining>0).sort((a,b)=>b.s.rate-a.s.rate)[0]||{s:subs[0]};
       qSelectedSubRateId=best.s.id;
       if(subsContainer) subsContainer.innerHTML=buildQSubRateList(card);
     } else if(subs.length===1) {
@@ -2229,7 +2231,7 @@ window.setQCurrency=setQCurrency;
 // 取一張卡「有明確限額的方案中剩餘最少」的那個；若全部無上限回傳 null
 function tightestCappedSub(card) {
   const subs=card.subRates||[];
-  const capped=subs.map(s=>({s,info:getCardRebate(card,s.id,[],null)})).filter(x=>x.info&&isFinite(x.info.remaining));
+  const capped=subs.map(s=>({s,info:getCardRebate(card,s.id,qTripExps(),null)})).filter(x=>x.info&&isFinite(x.info.remaining));
   if(!capped.length) return null;
   return capped.sort((a,b)=>a.info.remaining-b.info.remaining)[0];
 }
@@ -2252,7 +2254,7 @@ function updateQTwd(tripId) {
     const useSelected=qSelectedCardId===card.id&&qSelectedSubRateId&&subs.some(s=>s.id===qSelectedSubRateId);
     const chosenSub=useSelected?subs.find(s=>s.id===qSelectedSubRateId):tightestCappedSub(card)?.s;
     if(chosenSub&&(estEl||statusEl)){
-      const info=getCardRebate(card,chosenSub.id,[],null);
+      const info=getCardRebate(card,chosenSub.id,qTripExps(),null);
       const remaining=info.remaining;
       if(amt>0&&twd>0){
         const isOver=twd>remaining;
@@ -2277,7 +2279,7 @@ function updateQTwd(tripId) {
       subs.forEach(sub=>{
         const remSpan=document.getElementById(`q-sub-rem-${sub.id}`);
         if(!remSpan) return;
-        const subInfo=getCardRebate(card,sub.id,[],null);
+        const subInfo=getCardRebate(card,sub.id,qTripExps(),null);
         remSpan.textContent=subInfo.remaining<=0?'額度已用完':`剩 NT$${fmtNum(subInfo.remaining)}`;
         remSpan.style.color=subInfo.remaining<=0?'var(--red)':'var(--faint)';
       });
@@ -2308,7 +2310,7 @@ function toggleRebateCard(cardId) {
     const card=DB.cards.find(c=>c.id===qSelectedCardId);
     const subs=card?.subRates||[];
     if(subs.length>1) {
-      const best=subs.map(s=>({s,info:getCardRebate(card,s.id,[],null)})).filter(x=>x.info.remaining>0).sort((a,b)=>b.s.rate-a.s.rate)[0]||{s:subs[0]};
+      const best=subs.map(s=>({s,info:getCardRebate(card,s.id,qTripExps(),null)})).filter(x=>x.info.remaining>0).sort((a,b)=>b.s.rate-a.s.rate)[0]||{s:subs[0]};
       qSelectedSubRateId=best.s.id;
       const container=document.getElementById(`rebate-subs-${card.id}`);
       if(container) container.innerHTML=buildQSubRateList(card);
@@ -2325,7 +2327,7 @@ function buildQSubRateList(card) {
   const subs=card.subRates||[];
   return `<div style="margin:2px 0 8px 14px;padding-left:10px;border-left:2px solid var(--line-light)">
     ${subs.map(sub=>{
-      const info=getCardRebate(card,sub.id,[],null);
+      const info=getCardRebate(card,sub.id,qTripExps(),null);
       const isActive=qSelectedSubRateId===sub.id;
       return `<button onclick="selectQSubRate('${card.id}','${sub.id}')" id="q-sub-${sub.id}" class="q-sub-btn"
         style="display:flex;align-items:center;gap:10px;width:100%;background:${isActive?'var(--accent-light)':'none'};border:1.5px solid ${isActive?'var(--accent)':'var(--line-light)'};border-radius:10px;cursor:pointer;padding:8px 10px;margin-top:6px;font-family:inherit;text-align:left;opacity:${info.remaining<=0?.5:1}">
@@ -2375,7 +2377,7 @@ function quickSave(tripId) {
     if(qSelectedSubRateId&&subs.some(s=>s.id===qSelectedSubRateId)) {
       subRateId=qSelectedSubRateId;
     } else if(subs.length) {
-      const best=subs.map(s=>({s,info:getCardRebate(card,s.id,[],null)})).sort((a,b)=>b.s.rate-a.s.rate)[0];
+      const best=subs.map(s=>({s,info:getCardRebate(card,s.id,qTripExps(),null)})).sort((a,b)=>b.s.rate-a.s.rate)[0];
       subRateId=best?.s.id||null;
     }
   }
