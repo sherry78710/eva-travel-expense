@@ -399,6 +399,7 @@ const ICONS = {
   nail:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6"/><path d="M10 2v4.3a3 3 0 0 1-.5 1.6L7 12a4 4 0 0 0-1 2.6V18a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-3.4A4 4 0 0 0 17 12l-2.5-4.1a3 3 0 0 1-.5-1.6V2"/></svg>`,
   search:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>`,
   camera:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>`,
+  download:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
   star:`<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
   sliders:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>`,
 };
@@ -473,19 +474,92 @@ function openPhotoLightbox(photos, startIdx) {
   let idx=startIdx||0;
   const overlay=document.createElement('div');
   overlay.id='photo-lightbox-overlay';
-  overlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.92);z-index:10000;display:flex;align-items:center;justify-content:center';
+  overlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.92);z-index:10000;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none';
   overlay.onclick=function(e){ if(e.target===overlay) closePhotoLightbox(); };
 
+  const imgWrap=document.createElement('div');
+  imgWrap.style.cssText='width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden';
   const img=document.createElement('img');
-  img.style.cssText='max-width:92%;max-height:80%;object-fit:contain;border-radius:8px;pointer-events:none';
+  img.style.cssText='max-width:92%;max-height:80%;object-fit:contain;border-radius:8px;transform-origin:center center;transition:transform .15s ease-out;will-change:transform';
   img.src=photos[idx];
-  overlay.appendChild(img);
+  imgWrap.appendChild(img);
+  overlay.appendChild(imgWrap);
+
+  // --- 縮放/拖曳狀態 ---
+  let scale=1, panX=0, panY=0;
+  let startDist=0, startScale=1;
+  let startPanX=0, startPanY=0, startTouchX=0, startTouchY=0;
+  let isPanning=false;
+  let lastTapTime=0;
+
+  function applyTransform(animate){
+    img.style.transition=animate?'transform .18s ease-out':'none';
+    img.style.transform=`translate(${panX}px, ${panY}px) scale(${scale})`;
+  }
+  function resetZoom(animate){ scale=1; panX=0; panY=0; applyTransform(animate); }
+  function clampPan(){
+    // 縮放倍率越大，可移動範圍越大；避免圖片被拖出畫面太多
+    const maxOffset=(scale-1)*200;
+    panX=Math.max(-maxOffset,Math.min(maxOffset,panX));
+    panY=Math.max(-maxOffset,Math.min(maxOffset,panY));
+  }
+
+  function dist(t1,t2){ return Math.hypot(t1.clientX-t2.clientX, t1.clientY-t2.clientY); }
+
+  overlay.addEventListener('touchstart',function(e){
+    if(e.touches.length===2){
+      startDist=dist(e.touches[0],e.touches[1]);
+      startScale=scale;
+    } else if(e.touches.length===1){
+      const now=Date.now();
+      if(now-lastTapTime<300){
+        // 雙擊：在 1x 與 2.5x 之間切換
+        if(scale>1){ resetZoom(true); }
+        else { scale=2.5; applyTransform(true); }
+        lastTapTime=0;
+        return;
+      }
+      lastTapTime=now;
+      if(scale>1){
+        isPanning=true;
+        startPanX=panX; startPanY=panY;
+        startTouchX=e.touches[0].clientX; startTouchY=e.touches[0].clientY;
+      }
+    }
+  },{passive:true});
+
+  overlay.addEventListener('touchmove',function(e){
+    if(e.touches.length===2){
+      e.preventDefault();
+      const d=dist(e.touches[0],e.touches[1]);
+      scale=Math.max(1,Math.min(4, startScale*(d/startDist)));
+      clampPan();
+      applyTransform(false);
+    } else if(e.touches.length===1 && isPanning){
+      e.preventDefault();
+      panX=startPanX+(e.touches[0].clientX-startTouchX);
+      panY=startPanY+(e.touches[0].clientY-startTouchY);
+      clampPan();
+      applyTransform(false);
+    }
+  },{passive:false});
+
+  overlay.addEventListener('touchend',function(e){
+    isPanning=false;
+    if(scale<1.05) resetZoom(true);
+  });
 
   const closeBtn=document.createElement('button');
   closeBtn.innerHTML=ico('x',20,'#fff');
   closeBtn.style.cssText='position:absolute;top:calc(16px + var(--safe-t, 0px));right:16px;width:36px;height:36px;border-radius:999px;background:rgba(255,255,255,.15);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer';
   closeBtn.onclick=function(e){ e.stopPropagation(); closePhotoLightbox(); };
   overlay.appendChild(closeBtn);
+
+  const saveBtn=document.createElement('button');
+  saveBtn.innerHTML=ico('download',20,'#fff');
+  saveBtn.style.cssText='position:absolute;top:calc(16px + var(--safe-t, 0px));right:60px;width:36px;height:36px;border-radius:999px;background:rgba(255,255,255,.15);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer';
+  saveBtn.onclick=function(e){ e.stopPropagation(); savePhotoToDevice(photos[idx]); };
+  overlay.appendChild(saveBtn);
 
   if(photos.length>1){
     const counter=document.createElement('div');
@@ -494,22 +568,47 @@ function openPhotoLightbox(photos, startIdx) {
     overlay.appendChild(counter);
 
     let _tx=null;
-    overlay.ontouchstart=function(e){ _tx=e.touches[0].clientX; };
-    overlay.ontouchend=function(e){
-      if(_tx===null) return;
+    overlay.addEventListener('touchstart',function(e){ if(e.touches.length===1 && scale<=1) _tx=e.touches[0].clientX; },{passive:true});
+    overlay.addEventListener('touchend',function(e){
+      if(_tx===null || scale>1) return;
       const dx=e.changedTouches[0].clientX-_tx;
       _tx=null;
       if(Math.abs(dx)<40) return;
       idx = dx<0 ? Math.min(idx+1, photos.length-1) : Math.max(idx-1, 0);
+      resetZoom(false);
       img.src=photos[idx];
+      saveBtn.onclick=function(e){ e.stopPropagation(); savePhotoToDevice(photos[idx]); };
       counter.textContent=`${idx+1} / ${photos.length}`;
-    };
+    });
   }
 
   document.body.appendChild(overlay);
   document.body.style.overflow='hidden';
 }
 window.openPhotoLightbox=openPhotoLightbox;
+
+// 儲存照片到裝置：優先用系統分享（iOS 會出現「儲存到照片」），
+// 不支援的環境則開新分頁顯示原圖，讓使用者可以長按另存。
+async function savePhotoToDevice(src){
+  try{
+    if(navigator.canShare){
+      const blob=await (await fetch(src)).blob();
+      const file=new File([blob], `photo-${Date.now()}.jpg`, {type:blob.type||'image/jpeg'});
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({files:[file]});
+        return;
+      }
+    }
+  }catch(err){ /* 使用者取消分享時也會進到這裡，不特別處理 */ }
+  const w=window.open();
+  if(w){
+    w.document.write(`<img src="${src}" style="max-width:100%;display:block;margin:0 auto">`);
+    w.document.title='長按圖片可另存到相簿';
+  } else {
+    showToast('請長按圖片以儲存');
+  }
+}
+window.savePhotoToDevice=savePhotoToDevice;
 
 function closePhotoLightbox() {
   const overlay=document.getElementById('photo-lightbox-overlay');
