@@ -857,12 +857,10 @@ function getCardRebate(card, subId, tripExps, excludeId) {
   const groupIds = groupSubs.map(s=>s.id);
   const sharing = groupIds.length>1;
 
+  // 上限/已用/剩餘都是「消費金額」口徑（不是回饋金額）：這樣才能回答「這張卡我還能刷多少」
   const usedInTrip = (tripExps||[])
     .filter(e=>pmRequiresCard(e.payment)&&e.cardId===card.id&&groupIds.includes(e.subRateId)&&e.id!==excludeId)
-    .reduce((s,e)=>{
-      const s2=card.subRates.find(x=>x.id===e.subRateId);
-      return s+(e.twdAmount||0)*((s2?.rate||0)/100);
-    },0);
+    .reduce((s,e)=>s+(e.twdAmount||0),0);
   const baseUsed = sharing ? groupSubs.reduce((s,x)=>s+(x.used||0),0) : (sub.used||0);
   const totalUsed = baseUsed+usedInTrip;
   // 沒填上限、也沒勾無上限 = 視同沒有設定額度限制，不應該顯示「額度已用完」；共用時以錨點方案的設定為準
@@ -2258,7 +2256,8 @@ function updateQTwd(tripId) {
       const remaining=info.remaining;
       if(amt>0&&twd>0){
         const isOver=twd>remaining;
-        const est=isOver?remaining:Math.min(twd*(chosenSub.rate/100),remaining);
+        const allowedSpend=Math.min(twd,remaining);
+        const est=allowedSpend*(chosenSub.rate/100);
         if(estEl){
           estEl.textContent=isOver?`⚠️ 超過NT$${fmtNum(twd-remaining)}`:`+NT$${fmtNum(est)}`;
           estEl.style.color=isOver?'var(--red)':'var(--green)';
@@ -2618,7 +2617,8 @@ function calcRebate(card,subId,amt,rate,cur,tripExps,excludeId) {
   const twd=cur==='TWD'?amt:amt*(rate||1);
   const info=getCardRebate(card,subId,tripExps,excludeId);
   if(!info) return 0;
-  return Math.min(twd*(info.rate/100),info.remaining);
+  const allowedSpend=Math.min(twd,info.remaining); // 超過消費額度的部分不計回饋
+  return allowedSpend*(info.rate/100);
 }
 
 // 表單互動
@@ -3582,7 +3582,7 @@ function buildSubRateRow(sub, allSubs){
       </div>
       <div style="flex:1.6" id="sr-limit-wrap-${sub.id}">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <div style="font-size:10px;color:var(--faint)">上限(NT$)</div>
+          <div style="font-size:10px;color:var(--faint)">刷卡金額上限(NT$)</div>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
             <input type="checkbox" id="sr-unlimited-${sub.id}" ${unlimited?'checked':''} onchange="toggleUnlimited('${sub.id}')" style="width:12px;height:12px;accent-color:var(--accent)">
             <span style="font-size:10px;color:var(--sub)">無上限</span>
@@ -3591,7 +3591,7 @@ function buildSubRateRow(sub, allSubs){
         <input type="number" inputmode="decimal" id="sr-limit-${sub.id}" value="${limit}" class="field-input" style="font-size:14px;opacity:${(unlimited||sharing)?'0.3':'1'}" ${(unlimited||sharing)?'disabled':''}>
       </div>
       <div style="flex:1" id="sr-used-wrap-${sub.id}">
-        <div style="font-size:10px;color:var(--faint);margin-bottom:4px">已用(NT$)</div>
+        <div style="font-size:10px;color:var(--faint);margin-bottom:4px">已刷金額(NT$)</div>
         <input type="number" inputmode="decimal" id="sr-used-${sub.id}" value="${used}" class="field-input" style="font-size:14px;opacity:${sharing?'0.3':'1'}" ${sharing?'disabled':''}>
       </div>
     </div>
