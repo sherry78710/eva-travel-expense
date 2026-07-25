@@ -891,6 +891,7 @@ function syncToCloud() {
 // 瀏覽器底層還是會確保這個請求送達，不會像一般 fetch 一樣被系統中斷腰斬。
 let _syncInFlight = false;
 let _syncQueuedAfter = false;
+let _dirty = false; // 是否有「已存到本機、但還沒確定同步到雲端」的變更
 
 function doSync(useKeepalive) {
   if(!syncCode||!sb) return Promise.resolve();
@@ -917,7 +918,7 @@ function doSync(useKeepalive) {
   // 不能用 keepalive，否則會直接失敗（"Load failed"），跟網路好壞無關。
   if(useKeepalive) opts.keepalive = true;
   return fetch(`${SUPABASE_URL}/rest/v1/app_data?on_conflict=sync_code`, opts).then(async res=>{
-    if(res.ok) { lsSet('last_synced_at', Date.now()); setSyncStatus('synced'); }
+    if(res.ok) { lsSet('last_synced_at', Date.now()); _dirty = false; setSyncStatus('synced'); }
     else {
       let bodyText = '';
       try { bodyText = await res.text(); } catch(e){}
@@ -937,8 +938,10 @@ function doSync(useKeepalive) {
 }
 // 一般存檔用：不帶 keepalive，沒有資料量上限問題
 function syncToCloudNow() { return doSync(false); }
-// 頁面即將切到背景/關閉時用：帶 keepalive，盡量確保請求送達
-function syncToCloudOnHide() { return doSync(true); }
+// 頁面即將切到背景/關閉時用：帶 keepalive，盡量確保請求送達——但只有在
+// 真的還有「已存到本機、尚未確定同步到雲端」的變更時才需要嘗試，否則就是白費一次
+// 注定會因為資料量超過 keepalive 上限而失敗的請求。
+function syncToCloudOnHide() { if(!_dirty) return Promise.resolve(); return doSync(true); }
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') syncToCloudOnHide(); });
 window.addEventListener('pagehide', syncToCloudOnHide);
 
@@ -977,7 +980,7 @@ if (!DB.categories.length) DB.categories = [...DEFAULT_CATEGORIES];
   if(changed) save('categories');
 })();
 
-function save(key) { lsSet(key, DB[key]); lsSet('last_local_change_at', Date.now()); syncToCloudNow(); }
+function save(key) { lsSet(key, DB[key]); lsSet('last_local_change_at', Date.now()); _dirty = true; syncToCloudNow(); }
 
 // ============================================================
 // 計算輔助
