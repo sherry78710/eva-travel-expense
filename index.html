@@ -941,7 +941,7 @@ if (!DB.categories.length) DB.categories = [...DEFAULT_CATEGORIES];
   if(changed) save('categories');
 })();
 
-function save(key) { lsSet(key, DB[key]); lsSet('last_local_change_at', Date.now()); syncToCloud(); }
+function save(key) { lsSet(key, DB[key]); lsSet('last_local_change_at', Date.now()); syncToCloudNow(); }
 
 // ============================================================
 // 計算輔助
