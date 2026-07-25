@@ -762,8 +762,8 @@ function syncStatusBarHtml() {
   if(syncStatus==='pending' || syncStatus==='failed') {
     const isFailed = syncStatus==='failed';
     const label = isFailed ? '同步失敗' : (syncStatusReason==='網路連線中斷'?'離線':'未同步');
-    return `<button class="sync-status-bar" onclick="retrySyncNow()" style="display:inline-flex;align-items:center;gap:5px;text-align:left;border:none;cursor:pointer;font-family:inherit;background:${isFailed?'var(--red-light)':'var(--accent-light)'};color:${isFailed?'var(--red)':'var(--accent)'};border-radius:999px;padding:4px 10px;font-size:11px;font-weight:600;flex-shrink:0;white-space:nowrap">
-      <span style="width:6px;height:6px;border-radius:999px;background:${isFailed?'var(--red)':'var(--accent)'};flex-shrink:0"></span>${label}・重試
+    return `<button class="sync-status-bar" onclick="handleSyncStatusClick()" style="display:inline-flex;align-items:center;gap:5px;text-align:left;border:none;cursor:pointer;font-family:inherit;background:${isFailed?'var(--red-light)':'var(--accent-light)'};color:${isFailed?'var(--red)':'var(--accent)'};border-radius:999px;padding:4px 10px;font-size:11px;font-weight:600;flex-shrink:0;white-space:nowrap">
+      <span style="width:6px;height:6px;border-radius:999px;background:${isFailed?'var(--red)':'var(--accent)'};flex-shrink:0"></span>${label}・${isFailed?'查看原因':'重試'}
     </button>`;
   }
   return `<span class="sync-status-bar" style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--faint);flex-shrink:0;white-space:nowrap">
@@ -781,6 +781,13 @@ function updateSyncStatusBarDOM() {
 }
 
 window.retrySyncNow=function(){ syncToCloudNow(); };
+let _lastSyncErrorDetail = '';
+window.handleSyncStatusClick = function(){
+  if(syncStatus==='failed'){
+    alert('同步失敗原因：\n' + (_lastSyncErrorDetail || '（沒有記錄到詳細原因，可能是網路瞬斷）'));
+  }
+  syncToCloudNow();
+};
 
 window.addEventListener('online', ()=>{ if(syncStatus==='pending'||syncStatus==='failed') syncToCloudNow(); });
 window.addEventListener('offline', ()=>{ setSyncStatus('pending','網路連線中斷'); });
@@ -906,10 +913,20 @@ function syncToCloudNow() {
       'Prefer': 'resolution=merge-duplicates,return=minimal',
     },
     body: JSON.stringify(payload),
-  }).then(res=>{
+  }).then(async res=>{
     if(res.ok) { lsSet('last_synced_at', Date.now()); setSyncStatus('synced'); }
-    else { console.error('立即同步失敗', res.status); setSyncStatus('failed'); }
-  }).catch(e=>{ console.error('立即同步失敗', e); setSyncStatus('failed'); })
+    else {
+      let bodyText = '';
+      try { bodyText = await res.text(); } catch(e){}
+      _lastSyncErrorDetail = `HTTP ${res.status}\n${bodyText}`.slice(0,500);
+      console.error('立即同步失敗', res.status, bodyText);
+      setSyncStatus('failed');
+    }
+  }).catch(e=>{
+    _lastSyncErrorDetail = '網路例外：' + (e && e.message ? e.message : String(e));
+    console.error('立即同步失敗', e);
+    setSyncStatus('failed');
+  })
   .finally(()=>{
     _syncInFlight = false;
     if(_syncQueuedAfter) { _syncQueuedAfter = false; syncToCloudNow(); }
