@@ -882,10 +882,18 @@ function syncToCloud() {
 // 改成直接呼叫 REST API 並加上 keepalive:true —— 這是瀏覽器專門為
 // 「頁面正要被關掉/切到背景」設計的機制，就算頁面已經被暫停，
 // 瀏覽器底層還是會確保這個請求送達，不會像一般 fetch 一樣被系統中斷腰斬。
+let _syncInFlight = false;
+let _syncQueuedAfter = false;
+
 function syncToCloudNow() {
-  if(!syncCode||!sb) return;
+  if(!syncCode||!sb) return Promise.resolve();
   clearTimeout(_syncSaveTimer);
   if(navigator.onLine===false) { setSyncStatus('pending','網路連線中斷'); return Promise.resolve(); }
+  // 已經有一個同步請求在飛行中：不要疊加新的請求（iOS 對同時進行的 keepalive
+  // 請求有資料量上限，疊加容易整批失敗），改成標記「稍後再補送一次」，
+  // 等目前這個請求結束後，用當下最新的資料再送一次即可。
+  if(_syncInFlight) { _syncQueuedAfter = true; setSyncStatus('pending'); return Promise.resolve(); }
+  _syncInFlight = true;
   setSyncStatus('syncing');
   const payload=[{ sync_code: syncCode, data: buildSyncPayload(), updated_at: new Date().toISOString() }];
   return fetch(`${SUPABASE_URL}/rest/v1/app_data?on_conflict=sync_code`, {
@@ -901,7 +909,11 @@ function syncToCloudNow() {
   }).then(res=>{
     if(res.ok) { lsSet('last_synced_at', Date.now()); setSyncStatus('synced'); }
     else { console.error('立即同步失敗', res.status); setSyncStatus('failed'); }
-  }).catch(e=>{ console.error('立即同步失敗', e); setSyncStatus('failed'); });
+  }).catch(e=>{ console.error('立即同步失敗', e); setSyncStatus('failed'); })
+  .finally(()=>{
+    _syncInFlight = false;
+    if(_syncQueuedAfter) { _syncQueuedAfter = false; syncToCloudNow(); }
+  });
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') syncToCloudNow(); });
 window.addEventListener('pagehide', syncToCloudNow);
