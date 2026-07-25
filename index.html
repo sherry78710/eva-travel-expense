@@ -19,10 +19,11 @@
   --line: #E5E2DA; --line-light: #EFECE4;
   --text: #1C1B19; --sub: #6B6760; --faint: #9E9890;
   --accent: #B8704C; --accent-light: #F5E9E2;
-  --green: #4A7A50; --red: #B8453A;
+  --green: #4A7A50; --red: #B8453A; --red-light: #F5E1DE;
   --btn-text: #fff;
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
+@keyframes syncPulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html { overflow: hidden; height: 100%; background: var(--bg); }
 body { overflow: hidden; height: 100%; background: var(--bg); width: 100%; position: relative; }
@@ -151,6 +152,13 @@ select.field-input { appearance: none; cursor: pointer; }
 .pay-tag.card { background: var(--accent-light); color: var(--accent); }
 .rate-flag { font-size: 9.5px; font-weight: 600; padding: 1.5px 7px; border-radius: 999px; background: var(--accent-light); color: var(--accent); flex-shrink: 0; white-space: nowrap; }
 .day-rate-badge { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--line-light); color: var(--sub); }
+.stat-sublist { max-height: 0; overflow: hidden; transition: max-height .25s ease; background: var(--line-light); border-radius: 12px; }
+.stat-sublist.open { max-height: 800px; margin: 2px 0 8px; }
+.stat-sub-item { display:flex; justify-content:space-between; align-items:center; width:100%; text-align:left; background:none; border:none; border-bottom:1px solid var(--line); padding:10px 14px; cursor:pointer; font-family:inherit; color:inherit; }
+.stat-sub-item:last-child { border-bottom:none; }
+.stat-sub-item:active { background:rgba(184,112,76,0.08); }
+.stat-chev { width:14px; height:14px; color:var(--faint); transition:transform .2s; flex-shrink:0; }
+.stat-chev.open { transform:rotate(180deg); }
 
 /* 信用卡回饋列 */
 .rebate-row { width: 100%; display: flex; justify-content: space-between; align-items: center; background: #F5F5F3; border-radius: 999px; padding: 8px 14px; margin-bottom: 6px; border: 1.5px solid transparent; cursor: pointer; font-family: inherit; }
@@ -720,6 +728,66 @@ let syncCode = (function(){
 })();
 let _syncSaveTimer = null;
 
+// ============================================================
+// 同步狀態列
+// ============================================================
+let syncStatus = 'synced'; // 'synced' | 'syncing' | 'pending' | 'failed'
+let syncStatusReason = '';
+let lastSyncedAt = lsGet('last_synced_at', null);
+
+function fmtRelativeTime(ts) {
+  if(!ts) return '尚未同步過';
+  const diff = Math.max(0, Date.now()-ts);
+  const min = Math.floor(diff/60000);
+  if(min<1) return '剛剛';
+  if(min<60) return `${min}分鐘前`;
+  const hr = Math.floor(min/60);
+  if(hr<24) return `${hr}小時前`;
+  return `${Math.floor(hr/24)}天前`;
+}
+
+function setSyncStatus(status, reason) {
+  syncStatus = status;
+  syncStatusReason = reason || '';
+  if(status==='synced') lastSyncedAt = Date.now();
+  updateSyncStatusBarDOM();
+}
+
+function syncStatusBarHtml() {
+  if(syncStatus==='syncing') {
+    return `<div class="sync-status-bar" style="display:flex;align-items:center;gap:6px;padding:5px 2px 14px;font-size:11.5px;font-weight:600;color:var(--sub)">
+      <span style="width:6px;height:6px;border-radius:999px;background:var(--accent);animation:syncPulse 1s infinite"></span>同步中...
+    </div>`;
+  }
+  if(syncStatus==='pending' || syncStatus==='failed') {
+    const isFailed = syncStatus==='failed';
+    const label = syncStatusReason || (isFailed?'同步失敗，點一下重試':'尚未同步');
+    return `<button class="sync-status-bar" onclick="retrySyncNow()" style="width:100%;display:flex;align-items:center;gap:6px;text-align:left;border:none;cursor:pointer;font-family:inherit;background:${isFailed?'var(--red-light)':'var(--accent-light)'};color:${isFailed?'var(--red)':'var(--accent)'};border-radius:10px;padding:8px 12px;margin:2px 0 14px;font-size:11.5px;font-weight:600">
+      <span style="width:6px;height:6px;border-radius:999px;background:${isFailed?'var(--red)':'var(--accent)'};flex-shrink:0"></span>
+      <span style="flex:1">${label}</span>
+      <span style="text-decoration:underline;flex-shrink:0">重試</span>
+    </button>`;
+  }
+  return `<div class="sync-status-bar" style="display:flex;align-items:center;gap:6px;padding:5px 2px 14px;font-size:11.5px;font-weight:600;color:var(--faint)">
+    <span style="width:6px;height:6px;border-radius:999px;background:var(--green);flex-shrink:0"></span>${lastSyncedAt?`已同步 · ${fmtRelativeTime(lastSyncedAt)}`:'尚未同步過'}
+  </div>`;
+}
+
+// 只更新畫面上狀態列的內容，不整頁重繪（避免打斷輸入中的欄位/捲動位置）
+function updateSyncStatusBarDOM() {
+  document.querySelectorAll('.sync-status-bar').forEach(el=>{
+    const tmp=document.createElement('div');
+    tmp.innerHTML=syncStatusBarHtml();
+    el.replaceWith(tmp.firstElementChild);
+  });
+}
+
+window.retrySyncNow=function(){ syncToCloudNow(); };
+
+window.addEventListener('online', ()=>{ if(syncStatus==='pending'||syncStatus==='failed') syncToCloudNow(); });
+window.addEventListener('offline', ()=>{ setSyncStatus('pending','網路連線中斷'); });
+setInterval(()=>{ if(syncStatus==='synced') updateSyncStatusBarDOM(); }, 30000);
+
 function lsGet(key, fallback) {
   try { const v=localStorage.getItem('tv_'+key); return v?JSON.parse(v):fallback; } catch { return fallback; }
 }
@@ -795,16 +863,39 @@ function buildSyncPayload() {
 function syncToCloud() {
   if(!syncCode||!sb) return;
   clearTimeout(_syncSaveTimer);
+  if(navigator.onLine===false) { setSyncStatus('pending','網路連線中斷'); return; }
+  setSyncStatus('pending');
   _syncSaveTimer = setTimeout(async ()=>{
+    setSyncStatus('syncing');
     try {
       await sb.from('app_data').upsert({
         sync_code: syncCode,
         data: buildSyncPayload(),
         updated_at: new Date().toISOString(),
       }, { onConflict: 'sync_code' });
-    } catch(e) { console.error('同步失敗', e); }
+      lsSet('last_synced_at', Date.now());
+      setSyncStatus('synced');
+    } catch(e) { console.error('同步失敗', e); setSyncStatus('failed'); }
   }, 600); // debounce 600ms 避免每個按鍵都打 API
 }
+
+// 立即同步（跳過 debounce）：在頁面即將被切走/關閉前使用，降低來不及送出的機率
+function syncToCloudNow() {
+  if(!syncCode||!sb) return;
+  clearTimeout(_syncSaveTimer);
+  if(navigator.onLine===false) { setSyncStatus('pending','網路連線中斷'); return Promise.resolve(); }
+  setSyncStatus('syncing');
+  return sb.from('app_data').upsert({
+    sync_code: syncCode,
+    data: buildSyncPayload(),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'sync_code' }).then(({error})=>{
+    if(!error) { lsSet('last_synced_at', Date.now()); setSyncStatus('synced'); }
+    else { console.error('立即同步失敗', error); setSyncStatus('failed'); }
+  }).catch(e=>{ console.error('立即同步失敗', e); setSyncStatus('failed'); });
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') syncToCloudNow(); });
+window.addEventListener('pagehide', syncToCloudNow);
 
 function logoutSync() {
   showModal('登出同步？','登出後本機資料會保留，但不會再自動同步到雲端，除非重新登入。',()=>{
@@ -841,7 +932,7 @@ if (!DB.categories.length) DB.categories = [...DEFAULT_CATEGORIES];
   if(changed) save('categories');
 })();
 
-function save(key) { lsSet(key, DB[key]); syncToCloud(); }
+function save(key) { lsSet(key, DB[key]); lsSet('last_local_change_at', Date.now()); syncToCloud(); }
 
 // ============================================================
 // 計算輔助
@@ -1224,6 +1315,7 @@ function renderTripList() {
 
   el.innerHTML=`
     <div class="page-header"><div><div class="page-subtitle">TRIPS</div><div class="page-title">我的旅程</div></div></div>
+    ${syncStatusBarHtml()}
 
     ${activeTrips.length?`
     <div style="font-size:11px;color:var(--faint);font-weight:700;letter-spacing:.08em;margin:14px 0 8px">進行中</div>
@@ -1731,7 +1823,8 @@ function renderExpList() {
     <div style="position:-webkit-sticky;position:sticky;top:0;background:var(--bg);z-index:10;padding-top:20px;padding-bottom:8px">
       <div style="margin-bottom:14px">
         <div style="font-size:11px;color:var(--faint);letter-spacing:.12em;font-weight:700;margin-bottom:2px">DETAILS</div>
-        <div style="font-size:19px;font-weight:700">${trip.name}</div>
+        <div style="font-size:19px;font-weight:700;margin-bottom:6px">${trip.name}</div>
+        ${syncStatusBarHtml()}
       </div>
 
       <!-- 個人/旅程切換：只有這趟旅程有公基金或代購紀錄時才顯示 -->
@@ -2056,6 +2149,7 @@ function renderQuickPanel(trip) {
 
   el.innerHTML=`
     <div class="page-header"><div><div class="page-subtitle">QUICK ADD</div><div class="page-title">記一筆</div></div></div>
+    ${syncStatusBarHtml()}
 
     <div class="pill-row" style="justify-content:center;margin-bottom:16px">
       <button class="pill ${qCurrency===trip.currency?'active':''}" onclick="setQCurrency('${trip.currency}')">${cur.flag} ${trip.currency}</button>
@@ -2805,6 +2899,22 @@ window.deleteExpConfirm=deleteExpConfirm;
 // ============================================================
 // 統計頁
 // ============================================================
+// 統計頁：類別/信用卡項目點開展開消費清單，同時間只展開一個
+window.toggleStatRow=function(rowId){
+  const el=document.getElementById(rowId);
+  const chev=document.getElementById(`chev-${rowId}`);
+  if(!el) return;
+  const isOpen=el.classList.contains('open');
+  document.querySelectorAll('.stat-sublist.open').forEach(s=>{
+    if(s.id!==rowId){
+      s.classList.remove('open');
+      document.getElementById(`chev-${s.id}`)?.classList.remove('open');
+    }
+  });
+  el.classList.toggle('open',!isOpen);
+  chev?.classList.toggle('open',!isOpen);
+};
+
 function renderStats() {
   const el=document.getElementById('page-stats');
   const trip=getCurrentTrip()||DB.trips.find(t=>t.id===selectedTripId)||DB.trips[0];
@@ -2847,12 +2957,16 @@ function renderStats() {
 
   el.innerHTML=`
     <div class="page-header"><div><div class="page-subtitle">${trip.name}</div><div class="page-title">統計</div></div></div>
+    ${syncStatusBarHtml()}
 
     <div style="font-size:11px;color:var(--faint);letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px">類別分布</div>
     ${catRows.length===0?`<div style="font-size:12px;color:var(--faint);padding:12px 0 24px">尚無資料</div>`:`
     <div style="margin-bottom:28px">
-      ${catRows.map(({cat,total,pct})=>`
-        <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line-light)">
+      ${catRows.map(({cat,total,pct})=>{
+        const rowId=`stat-cat-${cat.id||'none'}`;
+        const catExps=personalExps.filter(e=>(e.categoryId||null)===(cat.id||null)).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
+        return `
+        <button class="stat-sub-item" style="border-bottom:1px solid var(--line-light);padding:12px 0;gap:12px" onclick="toggleStatRow('${rowId}')">
           <span style="width:18px;height:18px;display:inline-flex;color:var(--sub)">${ico(cat.icon,18)}</span>
           <div style="flex:1">
             <div style="display:flex;justify-content:space-between;margin-bottom:5px">
@@ -2862,17 +2976,57 @@ function renderStats() {
             <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
           </div>
           <span style="font-size:11px;color:var(--faint);width:32px;text-align:right">${pct.toFixed(0)}%</span>
-        </div>`).join('')}
+          <svg class="stat-chev" id="chev-${rowId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="stat-sublist" id="${rowId}">
+          ${catExps.map(e=>{
+            const pmBadge=pmBadgeInfo(e);
+            return `<button class="stat-sub-item" onclick="event.stopPropagation();openExpense('${e.id}')">
+              <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+                <span style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.name||cat.name}</span>
+                <div style="display:flex;align-items:center;gap:5px">
+                  <span style="font-size:11px;color:var(--faint)">${(e.date||'').slice(5).replace('-','/')} · ${e.time||''}</span>
+                  ${pmBadge.label?`<span class="pay-tag ${pmBadge.isCash?'cash':'card'}">${pmBadge.label}</span>`:''}
+                </div>
+              </div>
+              <div style="font-size:13px;font-weight:700;color:var(--sub);flex-shrink:0;padding-left:10px">NT$ ${fmtNum(e.twdAmount)}</div>
+            </button>`;
+          }).join('')}
+        </div>`;
+      }).join('')}
     </div>`}
 
     <div style="font-size:11px;color:var(--faint);letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px">信用卡回饋</div>
     ${cardRows.length===0?`<div style="font-size:12px;color:var(--faint);padding:12px 0 24px">尚無刷卡紀錄</div>`:`
     <div style="margin-bottom:28px">
-      ${cardRows.map(({card,spent,rebate})=>`
-        <div style="display:flex;justify-content:space-between;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line-light)">
+      ${cardRows.map(({card,spent,rebate})=>{
+        const rowId=`stat-card-${card.id}`;
+        const cardExps=personalExps.filter(e=>pmRequiresCard(e.payment)&&e.cardId===card.id).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
+        return `
+        <button class="stat-sub-item" style="border-bottom:1px solid var(--line-light);padding:12px 0;align-items:baseline" onclick="toggleStatRow('${rowId}')">
           <div><div style="font-size:14px;font-weight:600">${card.name}</div><div style="font-size:11px;color:var(--faint);margin-top:2px">刷卡 NT$${fmtNum(spent)}</div></div>
-          <span style="font-size:15px;font-weight:700;color:var(--green)">+NT$${fmtNum(rebate)}</span>
-        </div>`).join('')}
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:15px;font-weight:700;color:var(--green)">+NT$${fmtNum(rebate)}</span>
+            <svg class="stat-chev" id="chev-${rowId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+        </button>
+        <div class="stat-sublist" id="${rowId}">
+          ${cardExps.map(e=>{
+            const sub=card.subRates?.find(s=>s.id===e.subRateId);
+            const eRebate=sub?(e.twdAmount||0)*(sub.rate/100):0;
+            return `<button class="stat-sub-item" onclick="event.stopPropagation();openExpense('${e.id}')">
+              <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+                <span style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.name||''}</span>
+                <span style="font-size:11px;color:var(--faint)">${(e.date||'').slice(5).replace('-','/')} · ${e.time||''}</span>
+              </div>
+              <div style="text-align:right;flex-shrink:0;padding-left:10px">
+                <div style="font-size:13px;font-weight:700;color:var(--sub)">NT$ ${fmtNum(e.twdAmount)}</div>
+                <div style="font-size:11px;font-weight:600;color:var(--green);margin-top:1px">+NT$${fmtNum(eRebate)}</div>
+              </div>
+            </button>`;
+          }).join('')}
+        </div>`;
+      }).join('')}
       <div style="display:flex;justify-content:space-between;padding:14px 0 0">
         <span style="font-size:13px;font-weight:700">總回饋</span>
         <span style="font-size:19px;font-weight:700;color:var(--green)">NT$ ${fmtNum(totalRebate)}</span>
@@ -3842,6 +3996,15 @@ function initApp() {
     if(sb) {
       sb.from('app_data').select('data').eq('sync_code', syncCode).maybeSingle().then(({data,error})=>{
         if(!error && data) {
+          // 安全檢查：如果本機有還沒同步成功的變更（例如上次關閉 App 時來不及送出），
+          // 絕不能讓雲端的舊資料蓋過本機——反過來把本機資料補推上雲端才對。
+          const localChangeAt = lsGet('last_local_change_at', 0);
+          const localSyncedAt = lsGet('last_synced_at', 0);
+          const hasUnsyncedLocalChanges = localChangeAt > localSyncedAt;
+          if(hasUnsyncedLocalChanges) {
+            syncToCloudNow();
+            return;
+          }
           const cloud=data.data||{};
           DB.trips = cloud.trips || DB.trips;
           DB.expenses = cloud.expenses || DB.expenses;
@@ -3852,6 +4015,7 @@ function initApp() {
           DB.theme = cloud.theme || DB.theme;
           DB.paymentMethods = (cloud.paymentMethods&&cloud.paymentMethods.length) ? cloud.paymentMethods : DB.paymentMethods;
           ['trips','expenses','cards','categories','payees','funds','theme','paymentMethods'].forEach(k=>lsSet(k,DB[k]));
+          lsSet('last_synced_at', Date.now());
           applyTheme(DB.theme);
           render();
         }
