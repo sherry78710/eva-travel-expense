@@ -1019,6 +1019,7 @@ let navStack = { home:'list', settings:'main' };
 let selectedTripId=null, editingTripId=null;
 let expSearchQ='', expFilterCatId=null, expFilterPayment=null, expFilterPurchase=false, _expFilterOpen=false, _expTotalOpen=false;
 let editingExpId=null, expandedPrefill=null, addSubView='quick';
+let returnToTab='exp'; // 從編輯消費表單儲存/返回/刪除後，要導回的分頁
 let settingsEditCardId=null, settingsEditFundId=null;
 
 function switchTab(tab, opts) {
@@ -1312,7 +1313,7 @@ function renderTripList() {
   };
 
   el.innerHTML=`
-    <div class="page-header"><div><div style="display:flex;align-items:center;gap:8px"><div class="page-subtitle" style="margin-bottom:0">TRIPS</div>${syncStatusBarHtml()}</div><div class="page-title">我的旅程</div></div></div>
+    <div class="page-header"><div style="width:100%"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><div class="page-subtitle" style="margin-bottom:0">TRIPS</div>${syncStatusBarHtml()}</div><div class="page-title">我的旅程</div></div></div>
 
     ${activeTrips.length?`
     <div style="font-size:11px;color:var(--faint);font-weight:700;letter-spacing:.08em;margin:14px 0 8px">進行中</div>
@@ -1819,7 +1820,7 @@ function renderExpList() {
   el.innerHTML=`
     <div style="position:-webkit-sticky;position:sticky;top:0;background:var(--bg);z-index:10;padding-top:20px;padding-bottom:8px">
       <div style="margin-bottom:14px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px">
           <div style="font-size:11px;color:var(--faint);letter-spacing:.12em;font-weight:700">DETAILS</div>
           ${syncStatusBarHtml()}
         </div>
@@ -2053,6 +2054,7 @@ window.setDetailMode=setDetailMode;
 function openExpense(id) {
   editingExpId=id; expandedPrefill=null; addSubView='form';
   _efCur=null;_efCatId=null;_efPayment=null;_efCardId=null;_efSubRateId=null;_efFundId=null;_efPurchaseForId=null;_efPhotosLoadedFor=null;
+  returnToTab=currentTab; // 記住是從哪個分頁點進來編輯的（例如統計頁），儲存/返回後要回去那裡
   switchTab('add', {keepEdit:true});
 }
 window.openExpense=openExpense;
@@ -2147,7 +2149,7 @@ function renderQuickPanel(trip) {
   }).filter(Boolean);
 
   el.innerHTML=`
-    <div class="page-header"><div><div style="display:flex;align-items:center;gap:8px"><div class="page-subtitle" style="margin-bottom:0">QUICK ADD</div>${syncStatusBarHtml()}</div><div class="page-title">記一筆</div></div></div>
+    <div class="page-header"><div style="width:100%"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><div class="page-subtitle" style="margin-bottom:0">QUICK ADD</div>${syncStatusBarHtml()}</div><div class="page-title">記一筆</div></div></div>
 
     <div class="pill-row" style="justify-content:center;margin-bottom:16px">
       <button class="pill ${qCurrency===trip.currency?'active':''}" onclick="setQCurrency('${trip.currency}')">${cur.flag} ${trip.currency}</button>
@@ -2867,7 +2869,7 @@ function submitExpense(tripId,existingId) {
   _efCur=null;_efCatId=null;_efPayment=null;_efCardId=null;_efSubRateId=null;_efFundId=null;_efPurchaseForId=null;_efPhotos=[];_efPhotosLoadedFor=null;
   editingExpId=null; expandedPrefill=null; addSubView='quick';
   if(existingId){
-    selectedTripId=tripId; switchTab('exp');
+    selectedTripId=tripId; switchTab(returnToTab||'exp');
   } else { render(); }
 }
 window.submitExpense=submitExpense;
@@ -2877,7 +2879,7 @@ function backFromForm() {
   if(editingExpId){
     const exp=DB.expenses.find(e=>e.id===editingExpId);
     editingExpId=null; addSubView='quick';
-    if(exp){selectedTripId=exp.tripId;switchTab('exp');}
+    if(exp){selectedTripId=exp.tripId;switchTab(returnToTab||'exp');}
   } else { editingExpId=null;expandedPrefill=null;addSubView='quick';render(); }
 }
 window.backFromForm=backFromForm;
@@ -2889,7 +2891,7 @@ function deleteExpConfirm(id) {
     _efCur=null;_efCatId=null;_efPayment=null;_efCardId=null;_efSubRateId=null;_efFundId=null;_efPurchaseForId=null;_efPhotos=[];_efPhotosLoadedFor=null;
     editingExpId=null;addSubView='quick';
     showToast('已刪除');
-    if(exp){selectedTripId=exp.tripId;switchTab('exp');}
+    if(exp){selectedTripId=exp.tripId;switchTab(returnToTab||'exp');}
   },true);
 }
 window.deleteExpConfirm=deleteExpConfirm;
@@ -2954,7 +2956,7 @@ function renderStats() {
   purchaseExps.forEach(e=>{const k=e.purchaseForId||'unspec';payeeMap[k]=(payeeMap[k]||0)+(e.amount||0);});
 
   el.innerHTML=`
-    <div class="page-header"><div style="width:100%;min-width:0"><div style="display:flex;align-items:center;gap:8px;min-width:0"><div class="page-subtitle" style="margin-bottom:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${trip.name}</div>${syncStatusBarHtml()}</div><div class="page-title">統計</div></div></div>
+    <div class="page-header"><div style="width:100%;min-width:0"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0"><div class="page-subtitle" style="margin-bottom:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${trip.name}</div>${syncStatusBarHtml()}</div><div class="page-title">統計</div></div></div>
 
     <div style="font-size:11px;color:var(--faint);letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px">類別分布</div>
     ${catRows.length===0?`<div style="font-size:12px;color:var(--faint);padding:12px 0 24px">尚無資料</div>`:`
