@@ -877,19 +877,30 @@ function syncToCloud() {
   }, 600); // debounce 600ms 避免每個按鍵都打 API
 }
 
-// 立即同步（跳過 debounce）：在頁面即將被切走/關閉前使用，降低來不及送出的機率
+// 立即同步（跳過 debounce）：在頁面即將被切走/關閉前使用。
+// 這裡刻意不用 supabase-js 的 client（它底層的 fetch 沒有 keepalive），
+// 改成直接呼叫 REST API 並加上 keepalive:true —— 這是瀏覽器專門為
+// 「頁面正要被關掉/切到背景」設計的機制，就算頁面已經被暫停，
+// 瀏覽器底層還是會確保這個請求送達，不會像一般 fetch 一樣被系統中斷腰斬。
 function syncToCloudNow() {
   if(!syncCode||!sb) return;
   clearTimeout(_syncSaveTimer);
   if(navigator.onLine===false) { setSyncStatus('pending','網路連線中斷'); return Promise.resolve(); }
   setSyncStatus('syncing');
-  return sb.from('app_data').upsert({
-    sync_code: syncCode,
-    data: buildSyncPayload(),
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'sync_code' }).then(({error})=>{
-    if(!error) { lsSet('last_synced_at', Date.now()); setSyncStatus('synced'); }
-    else { console.error('立即同步失敗', error); setSyncStatus('failed'); }
+  const payload=[{ sync_code: syncCode, data: buildSyncPayload(), updated_at: new Date().toISOString() }];
+  return fetch(`${SUPABASE_URL}/rest/v1/app_data?on_conflict=sync_code`, {
+    method: 'POST',
+    keepalive: true,
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'Prefer': 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(payload),
+  }).then(res=>{
+    if(res.ok) { lsSet('last_synced_at', Date.now()); setSyncStatus('synced'); }
+    else { console.error('立即同步失敗', res.status); setSyncStatus('failed'); }
   }).catch(e=>{ console.error('立即同步失敗', e); setSyncStatus('failed'); });
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') syncToCloudNow(); });
