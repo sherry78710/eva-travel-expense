@@ -892,20 +892,18 @@ function syncToCloud() {
 let _syncInFlight = false;
 let _syncQueuedAfter = false;
 
-function syncToCloudNow() {
+function doSync(useKeepalive) {
   if(!syncCode||!sb) return Promise.resolve();
   clearTimeout(_syncSaveTimer);
   if(navigator.onLine===false) { setSyncStatus('pending','網路連線中斷'); return Promise.resolve(); }
-  // 已經有一個同步請求在飛行中：不要疊加新的請求（iOS 對同時進行的 keepalive
-  // 請求有資料量上限，疊加容易整批失敗），改成標記「稍後再補送一次」，
+  // 已經有一個同步請求在飛行中：不要疊加新的請求，改成標記「稍後再補送一次」，
   // 等目前這個請求結束後，用當下最新的資料再送一次即可。
   if(_syncInFlight) { _syncQueuedAfter = true; setSyncStatus('pending'); return Promise.resolve(); }
   _syncInFlight = true;
   setSyncStatus('syncing');
   const payload=[{ sync_code: syncCode, data: buildSyncPayload(), updated_at: new Date().toISOString() }];
-  return fetch(`${SUPABASE_URL}/rest/v1/app_data?on_conflict=sync_code`, {
+  const opts = {
     method: 'POST',
-    keepalive: true,
     headers: {
       'Content-Type': 'application/json',
       'apikey': SUPABASE_ANON_KEY,
@@ -913,7 +911,12 @@ function syncToCloudNow() {
       'Prefer': 'resolution=merge-duplicates,return=minimal',
     },
     body: JSON.stringify(payload),
-  }).then(async res=>{
+  };
+  // keepalive 只在頁面正要被切到背景/關閉時使用：Safari 對 keepalive 請求的
+  // 傳輸量有嚴格上限（約 64KB），一般存檔（資料量可能較大，尤其含照片）
+  // 不能用 keepalive，否則會直接失敗（"Load failed"），跟網路好壞無關。
+  if(useKeepalive) opts.keepalive = true;
+  return fetch(`${SUPABASE_URL}/rest/v1/app_data?on_conflict=sync_code`, opts).then(async res=>{
     if(res.ok) { lsSet('last_synced_at', Date.now()); setSyncStatus('synced'); }
     else {
       let bodyText = '';
@@ -929,11 +932,15 @@ function syncToCloudNow() {
   })
   .finally(()=>{
     _syncInFlight = false;
-    if(_syncQueuedAfter) { _syncQueuedAfter = false; syncToCloudNow(); }
+    if(_syncQueuedAfter) { _syncQueuedAfter = false; doSync(false); }
   });
 }
-document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') syncToCloudNow(); });
-window.addEventListener('pagehide', syncToCloudNow);
+// 一般存檔用：不帶 keepalive，沒有資料量上限問題
+function syncToCloudNow() { return doSync(false); }
+// 頁面即將切到背景/關閉時用：帶 keepalive，盡量確保請求送達
+function syncToCloudOnHide() { return doSync(true); }
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') syncToCloudOnHide(); });
+window.addEventListener('pagehide', syncToCloudOnHide);
 
 function logoutSync() {
   showModal('登出同步？','登出後本機資料會保留，但不會再自動同步到雲端，除非重新登入。',()=>{
