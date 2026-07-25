@@ -755,22 +755,20 @@ function setSyncStatus(status, reason) {
 
 function syncStatusBarHtml() {
   if(syncStatus==='syncing') {
-    return `<div class="sync-status-bar" style="display:flex;align-items:center;gap:6px;padding:5px 2px 14px;font-size:11.5px;font-weight:600;color:var(--sub)">
+    return `<span class="sync-status-bar" style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--sub);flex-shrink:0;white-space:nowrap">
       <span style="width:6px;height:6px;border-radius:999px;background:var(--accent);animation:syncPulse 1s infinite"></span>同步中...
-    </div>`;
+    </span>`;
   }
   if(syncStatus==='pending' || syncStatus==='failed') {
     const isFailed = syncStatus==='failed';
-    const label = syncStatusReason || (isFailed?'同步失敗，點一下重試':'尚未同步');
-    return `<button class="sync-status-bar" onclick="retrySyncNow()" style="width:100%;display:flex;align-items:center;gap:6px;text-align:left;border:none;cursor:pointer;font-family:inherit;background:${isFailed?'var(--red-light)':'var(--accent-light)'};color:${isFailed?'var(--red)':'var(--accent)'};border-radius:10px;padding:8px 12px;margin:2px 0 14px;font-size:11.5px;font-weight:600">
-      <span style="width:6px;height:6px;border-radius:999px;background:${isFailed?'var(--red)':'var(--accent)'};flex-shrink:0"></span>
-      <span style="flex:1">${label}</span>
-      <span style="text-decoration:underline;flex-shrink:0">重試</span>
+    const label = isFailed ? '同步失敗' : (syncStatusReason==='網路連線中斷'?'離線':'未同步');
+    return `<button class="sync-status-bar" onclick="retrySyncNow()" style="display:inline-flex;align-items:center;gap:5px;text-align:left;border:none;cursor:pointer;font-family:inherit;background:${isFailed?'var(--red-light)':'var(--accent-light)'};color:${isFailed?'var(--red)':'var(--accent)'};border-radius:999px;padding:4px 10px;font-size:11px;font-weight:600;flex-shrink:0;white-space:nowrap">
+      <span style="width:6px;height:6px;border-radius:999px;background:${isFailed?'var(--red)':'var(--accent)'};flex-shrink:0"></span>${label}・重試
     </button>`;
   }
-  return `<div class="sync-status-bar" style="display:flex;align-items:center;gap:6px;padding:5px 2px 14px;font-size:11.5px;font-weight:600;color:var(--faint)">
-    <span style="width:6px;height:6px;border-radius:999px;background:var(--green);flex-shrink:0"></span>${lastSyncedAt?`已同步 · ${fmtRelativeTime(lastSyncedAt)}`:'尚未同步過'}
-  </div>`;
+  return `<span class="sync-status-bar" style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--faint);flex-shrink:0;white-space:nowrap">
+    <span style="width:6px;height:6px;border-radius:999px;background:var(--green);flex-shrink:0"></span>${lastSyncedAt?`已同步・${fmtRelativeTime(lastSyncedAt)}`:'尚未同步過'}
+  </span>`;
 }
 
 // 只更新畫面上狀態列的內容，不整頁重繪（避免打斷輸入中的欄位/捲動位置）
@@ -1314,8 +1312,7 @@ function renderTripList() {
   };
 
   el.innerHTML=`
-    <div class="page-header"><div><div class="page-subtitle">TRIPS</div><div class="page-title">我的旅程</div></div></div>
-    ${syncStatusBarHtml()}
+    <div class="page-header"><div><div style="display:flex;align-items:center;gap:8px"><div class="page-subtitle" style="margin-bottom:0">TRIPS</div>${syncStatusBarHtml()}</div><div class="page-title">我的旅程</div></div></div>
 
     ${activeTrips.length?`
     <div style="font-size:11px;color:var(--faint);font-weight:700;letter-spacing:.08em;margin:14px 0 8px">進行中</div>
@@ -1822,9 +1819,11 @@ function renderExpList() {
   el.innerHTML=`
     <div style="position:-webkit-sticky;position:sticky;top:0;background:var(--bg);z-index:10;padding-top:20px;padding-bottom:8px">
       <div style="margin-bottom:14px">
-        <div style="font-size:11px;color:var(--faint);letter-spacing:.12em;font-weight:700;margin-bottom:2px">DETAILS</div>
-        <div style="font-size:19px;font-weight:700;margin-bottom:6px">${trip.name}</div>
-        ${syncStatusBarHtml()}
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+          <div style="font-size:11px;color:var(--faint);letter-spacing:.12em;font-weight:700">DETAILS</div>
+          ${syncStatusBarHtml()}
+        </div>
+        <div style="font-size:19px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${trip.name}</div>
       </div>
 
       <!-- 個人/旅程切換：只有這趟旅程有公基金或代購紀錄時才顯示 -->
@@ -2148,8 +2147,7 @@ function renderQuickPanel(trip) {
   }).filter(Boolean);
 
   el.innerHTML=`
-    <div class="page-header"><div><div class="page-subtitle">QUICK ADD</div><div class="page-title">記一筆</div></div></div>
-    ${syncStatusBarHtml()}
+    <div class="page-header"><div><div style="display:flex;align-items:center;gap:8px"><div class="page-subtitle" style="margin-bottom:0">QUICK ADD</div>${syncStatusBarHtml()}</div><div class="page-title">記一筆</div></div></div>
 
     <div class="pill-row" style="justify-content:center;margin-bottom:16px">
       <button class="pill ${qCurrency===trip.currency?'active':''}" onclick="setQCurrency('${trip.currency}')">${cur.flag} ${trip.currency}</button>
@@ -2956,8 +2954,7 @@ function renderStats() {
   purchaseExps.forEach(e=>{const k=e.purchaseForId||'unspec';payeeMap[k]=(payeeMap[k]||0)+(e.amount||0);});
 
   el.innerHTML=`
-    <div class="page-header"><div><div class="page-subtitle">${trip.name}</div><div class="page-title">統計</div></div></div>
-    ${syncStatusBarHtml()}
+    <div class="page-header"><div style="width:100%;min-width:0"><div style="display:flex;align-items:center;gap:8px;min-width:0"><div class="page-subtitle" style="margin-bottom:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${trip.name}</div>${syncStatusBarHtml()}</div><div class="page-title">統計</div></div></div>
 
     <div style="font-size:11px;color:var(--faint);letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px">類別分布</div>
     ${catRows.length===0?`<div style="font-size:12px;color:var(--faint);padding:12px 0 24px">尚無資料</div>`:`
