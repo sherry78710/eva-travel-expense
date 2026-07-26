@@ -1146,6 +1146,7 @@ let expSearchQ='', expFilterCatId=null, expFilterPayment=null, expFilterPurchase
 let editingExpId=null, expandedPrefill=null, addSubView='quick';
 let returnToTab='exp'; // 從編輯消費表單儲存/返回/刪除後，要導回的分頁
 let settingsEditCardId=null, settingsEditFundId=null;
+let _statOpenRow=null; // 統計頁目前展開中的項目 id，重新 render 後要維持展開狀態
 
 function switchTab(tab, opts) {
   currentTab=tab;
@@ -3038,6 +3039,7 @@ window.toggleStatRow=function(rowId){
   });
   el.classList.toggle('open',!isOpen);
   chev?.classList.toggle('open',!isOpen);
+  _statOpenRow=isOpen?null:rowId; // 記住目前展開的是哪一個，重新 render 時才能還原
 };
 
 function renderStats() {
@@ -3089,6 +3091,7 @@ function renderStats() {
       ${catRows.map(({cat,total,pct})=>{
         const rowId=`stat-cat-${cat.id||'none'}`;
         const catExps=personalExps.filter(e=>(e.categoryId||null)===(cat.id||null)).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
+        const isOpen=_statOpenRow===rowId;
         return `
         <button class="stat-sub-item" style="border-bottom:1px solid var(--line-light);padding:12px 0;gap:12px" onclick="toggleStatRow('${rowId}')">
           <span style="width:18px;height:18px;display:inline-flex;color:var(--sub)">${ico(cat.icon,18)}</span>
@@ -3100,9 +3103,9 @@ function renderStats() {
             <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
           </div>
           <span style="font-size:11px;color:var(--faint);width:32px;text-align:right">${pct.toFixed(0)}%</span>
-          <svg class="stat-chev" id="chev-${rowId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          <svg class="stat-chev ${isOpen?'open':''}" id="chev-${rowId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        <div class="stat-sublist" id="${rowId}">
+        <div class="stat-sublist ${isOpen?'open':''}" id="${rowId}">
           ${catExps.map(e=>{
             const pmBadge=pmBadgeInfo(e);
             return `<button class="stat-sub-item" onclick="event.stopPropagation();openExpense('${e.id}')">
@@ -3126,15 +3129,16 @@ function renderStats() {
       ${cardRows.map(({card,spent,rebate})=>{
         const rowId=`stat-card-${card.id}`;
         const cardExps=personalExps.filter(e=>pmRequiresCard(e.payment)&&e.cardId===card.id).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
+        const isOpen=_statOpenRow===rowId;
         return `
         <button class="stat-sub-item" style="border-bottom:1px solid var(--line-light);padding:12px 0;align-items:baseline" onclick="toggleStatRow('${rowId}')">
           <div><div style="font-size:14px;font-weight:600">${card.name}</div><div style="font-size:11px;color:var(--faint);margin-top:2px">刷卡 NT$${fmtNum(spent)}</div></div>
           <div style="display:flex;align-items:center;gap:8px">
             <span style="font-size:15px;font-weight:700;color:var(--green)">+NT$${fmtNum(rebate)}</span>
-            <svg class="stat-chev" id="chev-${rowId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            <svg class="stat-chev ${isOpen?'open':''}" id="chev-${rowId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         </button>
-        <div class="stat-sublist" id="${rowId}">
+        <div class="stat-sublist ${isOpen?'open':''}" id="${rowId}">
           ${cardExps.map(e=>{
             const sub=card.subRates?.find(s=>s.id===e.subRateId);
             const eRebate=sub?(e.twdAmount||0)*(sub.rate/100):0;
