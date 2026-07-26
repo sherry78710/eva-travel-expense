@@ -1402,7 +1402,7 @@ function renderTripList() {
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;margin-left:8px">
             <span style="font-size:10px;padding:3px 8px;border-radius:999px;font-weight:700" class="${phaseColorClass}">${phaseLabel}</span>
-            <button onclick="event.stopPropagation();setCurrentTrip('${t.id}');renderTripList()" title="設為目前旅程" style="background:none;border:none;padding:0;cursor:pointer;color:${isCurrent?'#B98A4A':'var(--line)'};display:flex">${ico('star',16)}</button>
+            <button onclick="event.stopPropagation();setCurrentTrip('${t.id}');renderTripList()" title="切換到這趟旅程" style="background:none;border:none;padding:0;cursor:pointer;color:${isCurrent?'#B98A4A':'var(--line)'};display:flex">${ico('star',16)}</button>
             <button onclick="event.stopPropagation();deleteTripConfirm('${t.id}')" style="background:none;border:none;padding:0;cursor:pointer;color:var(--faint);display:flex">${ico('trash',15)}</button>
             <span style="color:var(--faint);display:flex;transition:transform .2s;${isOpen?'transform:rotate(180deg)':''}">${ico('chevdown',16)}</span>
           </div>
@@ -1432,7 +1432,7 @@ function renderTripList() {
           ${buildHomeAccordion(t.id,'cash','banknote','攜帶現金', t.cashAmount?`${cur.code} ${fmtNum(t.cashAmount)}`:'未設定', buildCashAccordionBody(t))}
           ${buildHomeAccordion(t.id,'funds','wallet','公基金', (DB.funds||[]).filter(f=>f.tripId===t.id).length?(DB.funds||[]).filter(f=>f.tripId===t.id).length+'個':'未設定', buildFundsAccordionBody(t))}
 
-          <button onclick="selectedTripId='${t.id}';switchTab('exp')" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:4px;font-size:12.5px;font-weight:700;color:var(--text);cursor:pointer;font-family:inherit">
+          <button onclick="setCurrentTrip('${t.id}');switchTab('exp')" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:4px;font-size:12.5px;font-weight:700;color:var(--text);cursor:pointer;font-family:inherit">
             查看消費紀錄 <span style="color:var(--faint)">›</span>
           </button>
         </div>`:''}
@@ -2198,19 +2198,23 @@ let qCurrency=null;
 
 function getActiveTrip() { return DB.trips.find(t=>t.status==='active'); }
 
-// 「目前旅程」：明細/快速記帳兩頁預設要用哪一趟旅程，在首頁卡片上用星星標記，會記住
+// 「目前旅程」：明細/快速記帳/統計三頁預設要用哪一趟旅程，在首頁卡片上用星星標記，會記住
+// 星星＝唯一的「切換旅程」開關：按下去同時決定「目前旅程」跟「正在看哪趟」，兩者永遠一致，不管旅程是否已結束
 let currentTripId = lsGet('currentTripId', null);
 function setCurrentTrip(id) {
   currentTripId = id;
   lsSet('currentTripId', id);
+  selectedTripId = id;
+  expSearchQ=''; expFilterCatId=null; expFilterPayment=null; expFilterPurchase=false; _expFilterOpen=false; _expTotalOpen=false;
 }
 window.setCurrentTrip=setCurrentTrip;
 
 function getCurrentTrip() {
+  if(currentTripId) {
+    const marked=DB.trips.find(t=>t.id===currentTripId);
+    if(marked) return marked;
+  }
   const candidates=DB.trips.filter(t=>getTripPhase(t)==='active'||getTripPhase(t)==='upcoming');
-  if(!candidates.length) return null;
-  const marked=candidates.find(t=>t.id===currentTripId);
-  if(marked) return marked;
   if(candidates.length===1) return candidates[0]; // 只有一趟時不用特別標記，自動當作目前旅程
   return null; // 多趟且沒標記 -> 由呼叫端決定怎麼提示
 }
