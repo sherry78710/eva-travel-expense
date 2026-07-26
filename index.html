@@ -834,7 +834,8 @@ async function loginWithSyncCode() {
       DB.funds = cloud.funds || [];
       DB.theme = cloud.theme || 'A';
       DB.paymentMethods = (cloud.paymentMethods && cloud.paymentMethods.length) ? cloud.paymentMethods : [...DEFAULT_PAYMENT_METHODS];
-      ['trips','expenses','cards','categories','payees','funds','theme','paymentMethods'].forEach(k=>lsSet(k,DB[k]));
+      DB.deletedIds = cloud.deletedIds || {};
+      ['trips','expenses','cards','categories','payees','funds','theme','paymentMethods','deletedIds'].forEach(k=>lsSet(k,DB[k]));
     } else {
       await sb.from('app_data').insert([{ sync_code: code, data: buildSyncPayload() }]);
     }
@@ -861,8 +862,17 @@ function buildSyncPayload() {
   return {
     trips: DB.trips, expenses: DB.expenses, cards: DB.cards,
     categories: DB.categories, payees: DB.payees, funds: DB.funds, theme: DB.theme,
-    paymentMethods: DB.paymentMethods,
+    paymentMethods: DB.paymentMethods, deletedIds: DB.deletedIds || {},
   };
+}
+
+// 記錄「這筆真的是使用者手動刪除的」，讓合併同步時知道不要把它救回來。
+// key 對應 MERGE_KEYS 裡的名稱（例如 'expenses'），id 是被刪除項目的 id。
+function markDeleted(key, id) {
+  if(!DB.deletedIds) DB.deletedIds = {};
+  if(!DB.deletedIds[key]) DB.deletedIds[key] = [];
+  DB.deletedIds[key].push({ id, at: Date.now() });
+  lsSet('deletedIds', DB.deletedIds);
 }
 
 function syncToCloud() {
@@ -893,6 +903,65 @@ let _syncInFlight = false;
 let _syncQueuedAfter = false;
 let _dirty = false; // 是否有「已存到本機、但還沒確定同步到雲端」的變更
 
+// 會被合併同步的資料清單（依 id 合併，本機版本優先，但雲端獨有的項目會被保留下來）
+const MERGE_KEYS = ['trips','expenses','cards','categories','payees','funds','paymentMethods'];
+
+async function fetchCloudDataForMerge() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/app_data?select=data&sync_code=eq.${encodeURIComponent(syncCode)}`, {
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
+    });
+    if(!res.ok) return null;
+    const arr = await res.json();
+    return (arr && arr[0] && arr[0].data) ? arr[0].data : null;
+  } catch(e) { return null; }
+}
+
+function mergeArrayById(cloudArr, localArr) {
+  cloudArr = Array.isArray(cloudArr) ? cloudArr : [];
+  localArr = Array.isArray(localArr) ? localArr : [];
+  const map = new Map();
+  cloudArr.forEach(item=>{ if(item && item.id!=null) map.set(item.id, item); });
+  localArr.forEach(item=>{ if(item && item.id!=null) map.set(item.id, item); }); // 本機版本較新，覆蓋雲端同 id 的版本；本機沒有的 id 則保持雲端原本的
+  return Array.from(map.values());
+}
+
+// 推送前先把「雲端有、本機沒有」的資料（例如另一台裝置剛新增的消費）合併回本機，
+// 避免這次推送把其他裝置已經成功同步上去的資料整個覆蓋掉。
+// 這是先前資料遺失（例如補登的消費隔天不見）的根本原因：之前是整包本機資料
+// 直接覆蓋雲端，只要有任何一台裝置的本機資料是舊的，一存檔就會把新資料洗掉。
+function mergeDeletedIds(cloudDel, localDel) {
+  cloudDel = cloudDel || {}; localDel = localDel || {};
+  const result = {};
+  MERGE_KEYS.forEach(key=>{
+    const map = new Map();
+    (cloudDel[key]||[]).forEach(d=>{ if(d && d.id!=null) map.set(d.id, d); });
+    (localDel[key]||[]).forEach(d=>{ if(d && d.id!=null) map.set(d.id, d); });
+    result[key] = Array.from(map.values());
+  });
+  return result;
+}
+
+async function mergeCloudIntoLocalBeforePush() {
+  const cloud = await fetchCloudDataForMerge();
+  if(!cloud) return; // 抓不到雲端資料（離線或例外）就不合併，直接推本機版本，不阻擋存檔
+  let changed = false;
+  const mergedDeletedIds = mergeDeletedIds(cloud.deletedIds, DB.deletedIds);
+  DB.deletedIds = mergedDeletedIds;
+  MERGE_KEYS.forEach(key=>{
+    let merged = mergeArrayById(cloud[key], DB[key]);
+    const deletedSet = new Set((mergedDeletedIds[key]||[]).map(d=>d.id));
+    if(deletedSet.size) merged = merged.filter(item=>!deletedSet.has(item.id));
+    if(merged.length !== (DB[key]||[]).length) changed = true;
+    DB[key] = merged;
+  });
+  if(changed) {
+    MERGE_KEYS.forEach(k=>lsSet(k, DB[k]));
+    lsSet('deletedIds', DB.deletedIds);
+    render();
+  }
+}
+
 function doSync(useKeepalive) {
   if(!syncCode||!sb) return Promise.resolve();
   clearTimeout(_syncSaveTimer);
@@ -902,22 +971,27 @@ function doSync(useKeepalive) {
   if(_syncInFlight) { _syncQueuedAfter = true; setSyncStatus('pending'); return Promise.resolve(); }
   _syncInFlight = true;
   setSyncStatus('syncing');
-  const payload=[{ sync_code: syncCode, data: buildSyncPayload(), updated_at: new Date().toISOString() }];
-  const opts = {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-      'Prefer': 'resolution=merge-duplicates,return=minimal',
-    },
-    body: JSON.stringify(payload),
-  };
-  // keepalive 只在頁面正要被切到背景/關閉時使用：Safari 對 keepalive 請求的
-  // 傳輸量有嚴格上限（約 64KB），一般存檔（資料量可能較大，尤其含照片）
-  // 不能用 keepalive，否則會直接失敗（"Load failed"），跟網路好壞無關。
-  if(useKeepalive) opts.keepalive = true;
-  return fetch(`${SUPABASE_URL}/rest/v1/app_data?on_conflict=sync_code`, opts).then(async res=>{
+  // 背景保命用的 keepalive 版本，求快求穩定送達，跳過合併這一步；
+  // 一般存檔（大部分情況）先合併雲端資料，避免覆蓋掉其他裝置的新資料。
+  const prep = useKeepalive ? Promise.resolve() : mergeCloudIntoLocalBeforePush();
+  return prep.then(()=>{
+    const payload=[{ sync_code: syncCode, data: buildSyncPayload(), updated_at: new Date().toISOString() }];
+    const opts = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Prefer': 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify(payload),
+    };
+    // keepalive 只在頁面正要被切到背景/關閉時使用：Safari 對 keepalive 請求的
+    // 傳輸量有嚴格上限（約 64KB），一般存檔（資料量可能較大，尤其含照片）
+    // 不能用 keepalive，否則會直接失敗（"Load failed"），跟網路好壞無關。
+    if(useKeepalive) opts.keepalive = true;
+    return fetch(`${SUPABASE_URL}/rest/v1/app_data?on_conflict=sync_code`, opts);
+  }).then(async res=>{
     if(res.ok) { lsSet('last_synced_at', Date.now()); _dirty = false; setSyncStatus('synced'); }
     else {
       let bodyText = '';
@@ -964,6 +1038,7 @@ let DB = {
   funds: lsGet('funds',[]),
   theme: lsGet('theme','A'),
   paymentMethods: lsGet('paymentMethods', DEFAULT_PAYMENT_METHODS),
+  deletedIds: lsGet('deletedIds', {}),
 };
 if (!DB.paymentMethods || !DB.paymentMethods.length) DB.paymentMethods = [...DEFAULT_PAYMENT_METHODS];
 if (!DB.categories.length) DB.categories = [...DEFAULT_CATEGORIES];
@@ -1719,7 +1794,7 @@ window.submitTrip=submitTrip;
 
 function deleteTripConfirm(id) {
   showModal('刪除這趟旅程?','旅程下的消費紀錄不會自動刪除。',()=>{
-    DB.trips=DB.trips.filter(t=>t.id!==id); save('trips');
+    markDeleted('trips', id); DB.trips=DB.trips.filter(t=>t.id!==id); save('trips');
     navStack.home='list'; selectedTripId=null;
     showToast('已刪除'); render();
   },true);
@@ -2937,7 +3012,7 @@ window.backFromForm=backFromForm;
 function deleteExpConfirm(id) {
   showModal('刪除這筆消費?','刪除後無法復原。',()=>{
     const exp=DB.expenses.find(e=>e.id===id);
-    DB.expenses=DB.expenses.filter(e=>e.id!==id); save('expenses');
+    markDeleted('expenses', id); DB.expenses=DB.expenses.filter(e=>e.id!==id); save('expenses');
     _efCur=null;_efCatId=null;_efPayment=null;_efCardId=null;_efSubRateId=null;_efFundId=null;_efPurchaseForId=null;_efPhotos=[];_efPhotosLoadedFor=null;
     editingExpId=null;addSubView='quick';
     showToast('已刪除');
@@ -3656,7 +3731,7 @@ window.addPm=addPm;
 
 function deletePmConfirm(id,name){
   showModal(`刪除「${name}」?`,'已經用這個付款方式記錄過的消費不會被刪除，只是無法再選用這個選項。',()=>{
-    DB.paymentMethods=DB.paymentMethods.filter(p=>p.id!==id); save('paymentMethods');
+    markDeleted('paymentMethods', id); DB.paymentMethods=DB.paymentMethods.filter(p=>p.id!==id); save('paymentMethods');
     document.getElementById('drag-pm-list').innerHTML=buildDragPmList();
   },true);
 }
@@ -3693,7 +3768,7 @@ window.addCat=addCat;
 
 function deleteCatConfirm(id,name){
   showModal(`刪除「${name}」?`,null,()=>{
-    DB.categories=DB.categories.filter(c=>c.id!==id); save('categories');
+    markDeleted('categories', id); DB.categories=DB.categories.filter(c=>c.id!==id); save('categories');
     document.getElementById('drag-cat-list').innerHTML=buildDragCatList();
   },true);
 }
@@ -3897,7 +3972,7 @@ window.submitCard=submitCard;
 
 function deleteCardConfirm(id){
   showModal('刪除這張信用卡?','已記錄的消費紀錄不會被刪除，但會失去卡片關聯。',()=>{
-    DB.cards=DB.cards.filter(c=>c.id!==id); save('cards');
+    markDeleted('cards', id); DB.cards=DB.cards.filter(c=>c.id!==id); save('cards');
     navStack.settings='main'; showToast('已刪除'); render();
   },true);
 }
@@ -4022,7 +4097,7 @@ window.submitFund=submitFund;
 
 function deleteFundConfirm(id){
   showModal('刪除這個公基金?','已記錄的消費紀錄不會被刪除，但會失去基金關聯。',()=>{
-    DB.funds=DB.funds.filter(f=>f.id!==id); save('funds');
+    markDeleted('funds', id); DB.funds=DB.funds.filter(f=>f.id!==id); save('funds');
     navStack.settings='main'; showToast('已刪除'); render();
   },true);
 }
@@ -4055,15 +4130,21 @@ function initApp() {
             return;
           }
           const cloud=data.data||{};
-          DB.trips = cloud.trips || DB.trips;
-          DB.expenses = cloud.expenses || DB.expenses;
-          DB.cards = cloud.cards || DB.cards;
-          DB.categories = (cloud.categories&&cloud.categories.length) ? cloud.categories : DB.categories;
-          DB.payees = cloud.payees || DB.payees;
-          DB.funds = cloud.funds || DB.funds;
+          let changed = false;
+          const mergedDeletedIds = mergeDeletedIds(cloud.deletedIds, DB.deletedIds);
+          DB.deletedIds = mergedDeletedIds;
+          MERGE_KEYS.forEach(key=>{
+            let merged = mergeArrayById(cloud[key], DB[key]);
+            const deletedSet = new Set((mergedDeletedIds[key]||[]).map(d=>d.id));
+            if(deletedSet.size) merged = merged.filter(item=>!deletedSet.has(item.id));
+            if(merged.length !== (DB[key]||[]).length) changed = true;
+            DB[key] = merged;
+          });
           DB.theme = cloud.theme || DB.theme;
-          DB.paymentMethods = (cloud.paymentMethods&&cloud.paymentMethods.length) ? cloud.paymentMethods : DB.paymentMethods;
-          ['trips','expenses','cards','categories','payees','funds','theme','paymentMethods'].forEach(k=>lsSet(k,DB[k]));
+          if(changed) {
+            MERGE_KEYS.forEach(k=>lsSet(k,DB[k]));
+            lsSet('deletedIds', DB.deletedIds);
+          }
           lsSet('last_synced_at', Date.now());
           applyTheme(DB.theme);
           render();
