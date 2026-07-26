@@ -1754,6 +1754,137 @@ function calConfirm() {
 }
 window.calConfirm=calConfirm;
 
+// ---- 消費日期＋時間 合併選擇彈窗（記一筆 / 編輯消費 共用）----
+let dtCalDate=null, dtCalTime=null, dtCalViewYear=null, dtCalViewMonth=null, _dtCalTarget=null;
+const ZH_MONTHS=['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+function fmtDateZh(iso) {
+  if(!iso) return '';
+  const [y,m,d]=iso.split('-').map(Number);
+  return `${y}年${m}月${d}日`;
+}
+
+function openDateTimeCal(target) {
+  _dtCalTarget=target;
+  dtCalDate=document.getElementById(`${target}-date`)?.value||todayISO();
+  dtCalTime=document.getElementById(`${target}-time`)?.value||nowTime();
+  dtCalViewYear=parseInt(dtCalDate.slice(0,4));
+  dtCalViewMonth=parseInt(dtCalDate.slice(5,7))-1;
+  toggleDateTimeCal();
+}
+window.openDateTimeCal=openDateTimeCal;
+
+function toggleDateTimeCal() {
+  let overlay=document.getElementById('dtcal-overlay');
+  if(!overlay){
+    overlay=document.createElement('div');
+    overlay.id='dtcal-overlay';
+    overlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(43,42,40,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
+    overlay.onclick=function(e){ if(e.target===overlay) closeDateTimeCal(); };
+    const inner=document.createElement('div');
+    inner.id='dtcal-container';
+    inner.style.cssText='width:100%;max-width:360px';
+    overlay.appendChild(inner);
+    document.body.appendChild(overlay);
+  }
+  document.getElementById('dtcal-container').innerHTML=buildDateTimeCal();
+  document.getElementById('dtcal-overlay').style.display='flex';
+  document.body.style.overflow='hidden';
+}
+window.toggleDateTimeCal=toggleDateTimeCal;
+
+function closeDateTimeCal(){
+  const overlay=document.getElementById('dtcal-overlay');
+  if(overlay) overlay.style.display='none';
+  document.body.style.overflow='';
+}
+window.closeDateTimeCal=closeDateTimeCal;
+
+function buildDateTimeCal() {
+  const y=dtCalViewYear, m=dtCalViewMonth;
+  const daysInMonth=new Date(y,m+1,0).getDate();
+  const firstDay=new Date(y,m,1).getDay();
+  const offset=firstDay===0?6:firstDay-1;
+  const today=todayISO();
+  const toISO=(d)=>`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+
+  return `
+    <div style="background:var(--card);border-radius:20px;overflow:hidden;border:1px solid var(--line)">
+      <div style="padding:14px 16px 10px;border-bottom:1px solid var(--line-light);display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:15px;font-weight:700">${y}年 ${ZH_MONTHS[m]}</span>
+        <div style="display:flex;gap:6px">
+          <button onclick="dtCalNav(-1)" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center">${ico('back',16)}</button>
+          <button onclick="dtCalNav(1)" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center">${ico('forward',16)}</button>
+        </div>
+      </div>
+      <div style="padding:12px 14px">
+        <div class="cal-grid" style="margin-bottom:4px">
+          ${['一','二','三','四','五','六','日'].map(d=>`<div style="text-align:center;font-size:11px;color:var(--faint);padding:4px 0">${d}</div>`).join('')}
+        </div>
+        <div class="cal-grid">
+          ${Array.from({length:offset}).map(()=>'<div></div>').join('')}
+          ${Array.from({length:daysInMonth}).map((_,i)=>{
+            const day=i+1;
+            const iso=toISO(day);
+            const isSel=iso===dtCalDate;
+            const isToday=iso===today;
+            let btnClass='cal-day-btn';
+            if(isSel) btnClass+=' range-start';
+            else if(isToday) btnClass+=' today';
+            return `<div class="cal-day"><button class="${btnClass}" onclick="dtCalSelectDay('${iso}')">${day}</button></div>`;
+          }).join('')}
+        </div>
+      </div>
+      <div style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--line-light)">
+        <span style="font-size:13px;color:var(--faint);font-weight:600">時間</span>
+        <div style="position:relative">
+          <span id="dtcal-time-disp" style="font-size:15px;font-weight:700;background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:6px 16px;display:inline-block">${dtCalTime}</span>
+          <input type="time" value="${dtCalTime}" oninput="dtCalTime=this.value;document.getElementById('dtcal-time-disp').textContent=this.value" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%">
+        </div>
+      </div>
+      <div style="padding:4px 14px 14px;display:flex;gap:10px">
+        <button onclick="dtCalReset()" style="flex:1;padding:12px;border-radius:999px;border:1px solid var(--line);background:var(--bg);font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;color:var(--text)">重置</button>
+        <button onclick="dtCalConfirm()" style="width:48px;height:48px;flex-shrink:0;border-radius:50%;border:none;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer">${ico('check',20)}</button>
+      </div>
+    </div>`;
+}
+
+function dtCalNav(dir) {
+  dtCalViewMonth+=dir;
+  if(dtCalViewMonth>11){dtCalViewMonth=0;dtCalViewYear++;}
+  else if(dtCalViewMonth<0){dtCalViewMonth=11;dtCalViewYear--;}
+  document.getElementById('dtcal-container').innerHTML=buildDateTimeCal();
+}
+window.dtCalNav=dtCalNav;
+
+function dtCalSelectDay(iso) {
+  dtCalDate=iso;
+  document.getElementById('dtcal-container').innerHTML=buildDateTimeCal();
+}
+window.dtCalSelectDay=dtCalSelectDay;
+
+function dtCalReset() {
+  dtCalDate=todayISO();
+  dtCalTime=nowTime();
+  dtCalViewYear=parseInt(dtCalDate.slice(0,4));
+  dtCalViewMonth=parseInt(dtCalDate.slice(5,7))-1;
+  document.getElementById('dtcal-container').innerHTML=buildDateTimeCal();
+}
+window.dtCalReset=dtCalReset;
+
+function dtCalConfirm() {
+  const target=_dtCalTarget;
+  const dateInput=document.getElementById(`${target}-date`);
+  const timeInput=document.getElementById(`${target}-time`);
+  if(dateInput) dateInput.value=dtCalDate;
+  if(timeInput) timeInput.value=dtCalTime;
+  const dateDisp=document.getElementById(`${target}-date-disp`);
+  const timeDisp=document.getElementById(`${target}-time-disp`);
+  if(dateDisp) dateDisp.textContent=fmtDateZh(dtCalDate);
+  if(timeDisp) timeDisp.textContent=dtCalTime;
+  closeDateTimeCal();
+}
+window.dtCalConfirm=dtCalConfirm;
+
 function submitTrip() {
   const name=document.getElementById('tf-name')?.value.trim();
   if(!name){showToast('請填寫旅程名稱');return;}
@@ -2353,10 +2484,12 @@ function renderQuickPanel(trip) {
         <span>更多細節</span><span id="q-more-chevron" style="display:flex;transition:transform .2s">${ico('chevdown',14)}</span>
       </button>
       <div id="q-more-section" style="display:none;padding-top:16px">
-        <div style="display:flex;gap:24px;margin-bottom:16px">
-          <div style="flex:1"><div class="field-label">日期</div><input type="date" class="field-input" id="q-date" value="${todayISO()}"></div>
-          <div style="flex:1"><div class="field-label">時間</div><input type="time" class="field-input" id="q-time" value="${nowTime()}"></div>
+        <div style="display:flex;gap:24px;margin-bottom:16px;cursor:pointer" onclick="openDateTimeCal('q')">
+          <div style="flex:1"><div class="field-label">日期</div><div class="field-input" id="q-date-disp">${fmtDateZh(todayISO())}</div></div>
+          <div style="flex:1"><div class="field-label">時間</div><div class="field-input" id="q-time-disp">${nowTime()}</div></div>
         </div>
+        <input type="hidden" id="q-date" value="${todayISO()}">
+        <input type="hidden" id="q-time" value="${nowTime()}">
         <div style="display:flex;gap:24px;margin-bottom:16px">
           <div style="flex:1"><div class="field-label">店家</div><input class="field-input" id="q-store" placeholder="例：一蘭拉麵"></div>
           <div style="flex:1"><div class="field-label">地點</div><input class="field-input" id="q-location" placeholder="例：澀谷"></div>
@@ -2790,10 +2923,12 @@ function renderExpenseForm(trip) {
       更多細節（日期、店家、地點、備註）${ico('chevdown',14)}
     </button>
     <div id="ef-more-section" style="display:none">
-      <div style="display:flex;gap:24px;margin-bottom:20px">
-        <div style="flex:1"><div class="field-label">日期</div><input type="date" class="field-input" id="ef-date" value="${e0?.date||todayISO()}"></div>
-        <div style="flex:1"><div class="field-label">時間</div><input type="time" class="field-input" id="ef-time" value="${e0?.time||nowTime()}"></div>
+      <div style="display:flex;gap:24px;margin-bottom:20px;cursor:pointer" onclick="openDateTimeCal('ef')">
+        <div style="flex:1"><div class="field-label">日期</div><div class="field-input" id="ef-date-disp">${fmtDateZh(e0?.date||todayISO())}</div></div>
+        <div style="flex:1"><div class="field-label">時間</div><div class="field-input" id="ef-time-disp">${e0?.time||nowTime()}</div></div>
       </div>
+      <input type="hidden" id="ef-date" value="${e0?.date||todayISO()}">
+      <input type="hidden" id="ef-time" value="${e0?.time||nowTime()}">
       <div style="display:flex;gap:24px;margin-bottom:20px">
         <div style="flex:1"><div class="field-label">店家</div><input class="field-input" id="ef-store" value="${e0?.store||''}" placeholder="例：一蘭拉麵"></div>
         <div style="flex:1"><div class="field-label">地點</div><input class="field-input" id="ef-location" value="${e0?.location||''}" placeholder="例：澀谷"></div>
