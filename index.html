@@ -61,6 +61,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Helvetica
 .pill.sm { padding: 5px 12px; font-size: 12px; }
 .badge-active { background: #E5EEE8; color: var(--green); }
 .badge-upcoming { background: #F3E9D8; color: #B98A4A; }
+.badge-done { background: #EDEDED; color: var(--faint); }
 .pill.lg { padding: 11px 22px; font-size: 14px; }
 .pill-row { display: flex; flex-wrap: wrap; gap: 8px; }
 
@@ -1451,18 +1452,7 @@ function renderTripList() {
 
     ${doneTrips.length?`
     <div style="font-size:11px;color:var(--faint);font-weight:700;letter-spacing:.08em;margin:18px 0 8px">已結束</div>
-    ${doneTrips.map(t=>{
-      const dateLine=t.startDate===t.endDate?t.startDate:`${t.startDate} – ${t.endDate}`;
-      const {totalTwd}=tripSummary(t.id);
-      return `<div class="list-row" style="cursor:pointer" onclick="openTrip('${t.id}')">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:11px;color:var(--faint);margin-bottom:2px">${dateLine}</div>
-          <div style="font-size:14px;font-weight:600">${t.name}</div>
-        </div>
-        <span style="font-size:12px;color:var(--faint);margin-right:8px">NT$ ${fmtNum(totalTwd)}</span>
-        <span style="color:var(--faint)">${ico('forward',16)}</span>
-      </div>`;
-    }).join('')}`:''}
+    ${doneTrips.map(t=>buildCard(t,'已結束','badge-done')).join('')}`:''}
 
     <button class="btn-outline" style="margin-top:20px" onclick="goCreateTrip()">+ 建立新旅程</button>`;
 }
@@ -2227,7 +2217,7 @@ function getCurrentTrip() {
 
 function renderAdd() {
   const el=document.getElementById('page-add');
-  const trip=editingExpId?DB.trips.find(t=>t.id===DB.expenses.find(e=>e.id===editingExpId)?.tripId):getCurrentTrip();
+  const trip=editingExpId?DB.trips.find(t=>t.id===DB.expenses.find(e=>e.id===editingExpId)?.tripId):(DB.trips.find(t=>t.id===selectedTripId)||getCurrentTrip());
 
   if(!trip) {
     const hasCandidates=DB.trips.some(t=>getTripPhase(t)==='active'||getTripPhase(t)==='upcoming');
@@ -2890,7 +2880,7 @@ window.selectEfCard=function(id) {
   _efCardId=id;
   document.querySelectorAll('[id^="ef-card-"]').forEach(b=>b.classList.toggle('active',b.id===`ef-card-${id}`));
   const card=DB.cards.find(c=>c.id===id);
-  const trip=editingExpId?DB.trips.find(t=>t.id===DB.expenses.find(e=>e.id===editingExpId)?.tripId):getCurrentTrip();
+  const trip=editingExpId?DB.trips.find(t=>t.id===DB.expenses.find(e=>e.id===editingExpId)?.tripId):(DB.trips.find(t=>t.id===selectedTripId)||getCurrentTrip());
   const tripId=trip?.id;
   const tripExps=DB.expenses.filter(e=>e.tripId===tripId);
   const editId=editingExpId;
@@ -2935,7 +2925,7 @@ window.selectSubRate=function(id) {
   updateEfRebatePreview();
 };
 function updateEfRebatePreview() {
-  const trip=editingExpId?DB.trips.find(t=>t.id===DB.expenses.find(e=>e.id===editingExpId)?.tripId):getCurrentTrip();
+  const trip=editingExpId?DB.trips.find(t=>t.id===DB.expenses.find(e=>e.id===editingExpId)?.tripId):(DB.trips.find(t=>t.id===selectedTripId)||getCurrentTrip());
   const cardId=_efCardId||(editingExpId?DB.expenses.find(e=>e.id===editingExpId)?.cardId:null);
   const card=DB.cards.find(c=>c.id===cardId);
   const previewEl=document.getElementById('ef-rebate-preview');
@@ -3044,7 +3034,7 @@ window.toggleStatRow=function(rowId){
 
 function renderStats() {
   const el=document.getElementById('page-stats');
-  const trip=getCurrentTrip()||DB.trips.find(t=>t.id===selectedTripId)||DB.trips[0];
+  const trip=DB.trips.find(t=>t.id===selectedTripId)||getCurrentTrip()||DB.trips[0];
   if(!trip){
     el.innerHTML=`<div class="page-header"><div><div class="page-subtitle">STATISTICS</div><div class="page-title">統計</div></div></div><div class="empty-state"><div class="empty-title">尚未選擇旅程</div></div>`;
     return;
