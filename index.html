@@ -2353,10 +2353,7 @@ function renderQuickPanel(trip) {
         <span>更多細節</span><span id="q-more-chevron" style="display:flex;transition:transform .2s">${ico('chevdown',14)}</span>
       </button>
       <div id="q-more-section" style="display:none;padding-top:16px">
-        <div style="display:flex;gap:24px;margin-bottom:16px">
-          <div style="flex:1"><div class="field-label">日期</div><input type="date" class="field-input" id="q-date" value="${todayISO()}"></div>
-          <div style="flex:1"><div class="field-label">時間</div><input type="time" class="field-input" id="q-time" value="${nowTime()}"></div>
-        </div>
+        <div style="margin-bottom:16px"><div class="field-label">日期時間</div><input type="datetime-local" class="field-input" id="q-datetime" value="${todayISO()}T${nowTime()}"></div>
         <div style="display:flex;gap:24px;margin-bottom:16px">
           <div style="flex:1"><div class="field-label">店家</div><input class="field-input" id="q-store" placeholder="例：一蘭拉麵"></div>
           <div style="flex:1"><div class="field-label">地點</div><input class="field-input" id="q-location" placeholder="例：澀谷"></div>
@@ -2599,8 +2596,8 @@ function quickSave(tripId) {
     id:uid('exp'), tripId,
     amount:amt, currency:qCurrency, twdAmount:twd,
     name:document.getElementById('q-name')?.value.trim()||'',
-    date:document.getElementById('q-date')?.value||todayISO(),
-    time:document.getElementById('q-time')?.value||nowTime(),
+    date:(document.getElementById('q-datetime')?.value||`${todayISO()}T${nowTime()}`).slice(0,10),
+    time:(document.getElementById('q-datetime')?.value||`${todayISO()}T${nowTime()}`).slice(11,16),
     categoryId:catId,
     payment,
     cardId:pmRequiresCard(payment)?qSelectedCardId:null,
@@ -2790,10 +2787,7 @@ function renderExpenseForm(trip) {
       更多細節（日期、店家、地點、備註）${ico('chevdown',14)}
     </button>
     <div id="ef-more-section" style="display:none">
-      <div style="display:flex;gap:24px;margin-bottom:20px">
-        <div style="flex:1"><div class="field-label">日期</div><input type="date" class="field-input" id="ef-date" value="${e0?.date||todayISO()}"></div>
-        <div style="flex:1"><div class="field-label">時間</div><input type="time" class="field-input" id="ef-time" value="${e0?.time||nowTime()}"></div>
-      </div>
+      <div style="margin-bottom:20px"><div class="field-label">日期時間</div><input type="datetime-local" class="field-input" id="ef-datetime" value="${e0?.date||todayISO()}T${e0?.time||nowTime()}"></div>
       <div style="display:flex;gap:24px;margin-bottom:20px">
         <div style="flex:1"><div class="field-label">店家</div><input class="field-input" id="ef-store" value="${e0?.store||''}" placeholder="例：一蘭拉麵"></div>
         <div style="flex:1"><div class="field-label">地點</div><input class="field-input" id="ef-location" value="${e0?.location||''}" placeholder="例：澀谷"></div>
@@ -2970,8 +2964,8 @@ function submitExpense(tripId,existingId) {
     id:existingId||uid('exp'), tripId,
     amount:amt, currency:cur, twdAmount:twd,
     name:document.getElementById('ef-name')?.value.trim()||'',
-    date:document.getElementById('ef-date')?.value||todayISO(),
-    time:document.getElementById('ef-time')?.value||nowTime(),
+    date:(document.getElementById('ef-datetime')?.value||`${todayISO()}T${nowTime()}`).slice(0,10),
+    time:(document.getElementById('ef-datetime')?.value||`${todayISO()}T${nowTime()}`).slice(11,16),
     categoryId:catId, payment, cardId, subRateId, fundId,
     store:document.getElementById('ef-store')?.value.trim()||'',
     location:document.getElementById('ef-location')?.value.trim()||'',
